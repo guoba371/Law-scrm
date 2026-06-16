@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>客户案件表格管理</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">客户案件工作台</p>
+          <h1>客户案件表格管理</h1>
+          <p class="subtitle">上传 Excel 后自动识别客户等级，补充案件进度，并导出可继续编辑的管理表。</p>
+        </div>
+        <div class="actions">
+          <div id="uploadStatus" class="upload-status hidden" aria-live="polite">
+            <div class="progress-track">
+              <div id="uploadProgressBar" class="progress-bar"></div>
+            </div>
+            <span id="uploadProgressText">准备上传</span>
+          </div>
+          <button id="noticeBtn" type="button" class="notice-button" aria-label="逾期未结案通知">
+            <span>通知</span>
+            <strong id="noticeBadge">0</strong>
+          </button>
+          <label class="file-button">
+            上传 Excel
+            <input id="fileInput" type="file" accept=".xlsx" />
+          </label>
+          <button id="themeToggleBtn" type="button" class="ghost-button">深色</button>
+          <button id="downloadBtn" type="button" disabled>下载表格</button>
+        </div>
+      </header>
+
+      <section class="summary-grid" aria-live="polite">
+        <article>
+          <span>全部客户</span>
+          <strong id="totalCustomerCount">0</strong>
+        </article>
+        <article>
+          <span>成交客户</span>
+          <strong id="closedCustomerCount">0</strong>
+        </article>
+        <article>
+          <span>未完结客户</span>
+          <strong id="openCaseCount">0</strong>
+        </article>
+        <article>
+          <span>已完结客户</span>
+          <strong id="completedCaseCount">0</strong>
+        </article>
+      </section>
+
+      <section class="view-tabs" aria-label="页面切换">
+        <button id="allCustomersTabBtn" class="view-tab active" type="button">全部客户</button>
+        <button id="closedCustomersTabBtn" class="view-tab" type="button">成交客户</button>
+      </section>
+
+      <section id="allCustomersPage" class="page-section">
+        <section class="panel hidden" id="allCustomersPanel">
+          <div class="panel-header">
+            <div>
+              <h2>全部客户</h2>
+              <p id="allCustomersHint">将 2026年每月客户情况统计 导入到此页面，字段与原表一一对应。</p>
+              <div id="allCustomersInlineStats" class="inline-stats" aria-live="polite">
+                <span>目前客户 0</span>
+                <span>成交客户 0</span>
+                <span>潜在客户 0</span>
+              </div>
+              <div class="legend color-meaning" aria-label="颜色含义">
+                <span><i class="dot red"></i>成交客户</span>
+                <span><i class="dot yellow"></i>潜在客户</span>
+                <span><i class="dot pink"></i>未成交客户</span>
+              </div>
+            </div>
+          </div>
+          <div class="table-toolbar">
+            <label class="toolbar-field">
+              <span>行距</span>
+              <input id="rowSpacingRange" type="range" min="28" max="72" step="2" value="42" />
+            </label>
+            <label class="toolbar-field">
+              <span>列宽</span>
+              <input id="columnWidthRange" type="range" min="120" max="260" step="4" value="148" />
+            </label>
+            <button id="addCustomerRowBtn" type="button" class="ghost-button">新增行</button>
+            <button id="addCustomerColumnBtn" type="button" class="ghost-button">新增列</button>
+          </div>
+          <div class="table-wrap compact">
+            <table id="customerTable">
+              <thead id="customerHead"></thead>
+              <tbody id="customerBody"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+
+      <section id="closedCustomersPage" class="page-section hidden">
+        <section class="panel">
+        <div class="panel-header">
+          <div>
+            <h2>成交客户案件跟踪</h2>
+            <p id="sourceHint">上传 Excel 后自动生成，原表字段完整保留，案件节点可持续补充。</p>
+          </div>
+          <div class="legend">
+            <span><i class="dot red"></i>成交</span>
+            <span><i class="dot yellow"></i>有价值潜在</span>
+            <span><i class="dot pink"></i>潜在未成交</span>
+            <span><i class="dot open"></i>未结案件</span>
+          </div>
+        </div>
+
+        <div id="emptyState" class="empty-state">
+          <strong>请选择原始客户统计 Excel</strong>
+          <span>系统会按红、黄、浅粉三种填色识别客户等级，并把上传表格的所有列纳入管理系统。</span>
+        </div>
+
+        <div class="table-wrap hidden" id="caseTableWrap">
+          <table id="caseTable">
+            <thead id="caseHead"></thead>
+            <tbody id="caseBody"></tbody>
+          </table>
+        </div>
+        </section>
+      </section>
+
+      <div id="editorModal" class="editor-modal hidden" aria-hidden="true">
+        <div class="editor-modal-backdrop" data-close-editor="true"></div>
+        <div class="editor-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="editorModalTitle">
+          <div class="editor-modal-header">
+            <div>
+              <strong id="editorModalTitle">详细编辑</strong>
+              <span id="editorModalMeta"></span>
+            </div>
+            <button id="editorModalCloseBtn" type="button" class="ghost-button">关闭</button>
+          </div>
+          <div class="editor-modal-body">
+            <textarea id="editorModalTextarea"></textarea>
+          </div>
+          <div class="editor-modal-footer">
+            <button id="editorModalSaveBtn" type="button">保存</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="noticeModal" class="notice-modal hidden" aria-hidden="true">
+        <div class="notice-modal-backdrop" data-close-notice="true"></div>
+        <div class="notice-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="noticeModalTitle">
+          <div class="notice-modal-header">
+            <div>
+              <strong id="noticeModalTitle">逾期未结案提醒</strong>
+              <span id="noticeModalMeta">超过 3 个月未结案的案件会显示在这里。</span>
+            </div>
+            <button id="noticeModalCloseBtn" type="button" class="ghost-button">关闭</button>
+          </div>
+          <div id="noticeModalBody" class="notice-modal-body"></div>
+        </div>
+      </div>
+    </main>
+
+    <script src="app.js?v=20260616-1"></script>
+  </body>
+</html>
