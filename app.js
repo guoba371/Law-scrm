@@ -899,7 +899,7 @@ function getTrackingColumn(key) {
 function renderCaseCellEditor(customer, tracking, column, rowIndex) {
   if (column.type === "case-type") {
     return `<div class="row-action-shell">
-      ${renderCaseTextEditor(customer.id, "caseType", tracking.caseType, "案件类型")}
+      ${renderCaseTypeEditor(customer.id, tracking.caseType)}
       <button class="icon-action delete-row-btn" type="button" data-delete-case-row="${rowIndex}" title="删除这一行">×</button>
     </div>`;
   }
@@ -914,6 +914,15 @@ function renderEditor(customerId, field, value, trackingIndex = -1) {
     return renderCaseTextEditor(customerId, field.key, value ? "是" : "否", field.label, trackingIndex);
   }
   return renderCaseTextEditor(customerId, field.key, value || "", field.label, trackingIndex);
+}
+
+function renderCaseTypeEditor(customerId, value) {
+  const normalized = normalizeCaseTypePasteValue(value);
+  return `<select class="case-type-select" data-table-copy="case-field" data-customer-id="${escapeAttr(customerId)}" data-field="caseType" aria-label="案件类型">
+    <option value="" ${normalized === "" ? "selected" : ""}></option>
+    <option value="民事" ${normalized === "民事" ? "selected" : ""}>民事</option>
+    <option value="刑事" ${normalized === "刑事" ? "selected" : ""}>刑事</option>
+  </select>`;
 }
 
 function renderCaseTextEditor(customerId, fieldKey, value, label, trackingIndex = -1) {
@@ -935,7 +944,9 @@ function handleTrackingInput(event) {
   if (!tracking) return;
   const field = TRACKING_FIELDS.find(item => item.key === input.dataset.field);
   tracking[input.dataset.field] =
-    field?.type === "checkbox"
+    input.dataset.field === "caseType"
+      ? normalizeCaseTypePasteValue(input.value)
+      : field?.type === "checkbox"
       ? normalizeTrackingPasteValue(field, input.value)
       : input.value;
   renderSummary();
@@ -1175,9 +1186,22 @@ function handleCasePaste(event) {
 }
 
 function applySingleInputPaste(input, value) {
-  input.value = input.dataset.customerDealStatus ? normalizeDealStatusPasteValue(value) : value;
+  input.value =
+    input.dataset.customerDealStatus
+      ? normalizeDealStatusPasteValue(value)
+      : input.dataset.field === "caseType"
+        ? normalizeCaseTypePasteValue(value)
+        : value;
   input.dispatchEvent(new Event("input", { bubbles: true }));
   input.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+function normalizeCaseTypePasteValue(value) {
+  const text = String(value || "").trim();
+  const normalized = text.toLowerCase();
+  if (text === "民事" || normalized === "civil") return "民事";
+  if (text === "刑事" || normalized === "criminal") return "刑事";
+  return "";
 }
 
 function normalizeDealStatusPasteValue(value) {
