@@ -830,6 +830,12 @@ function renderCaseTable() {
     input.addEventListener("input", handleTrackingInput);
     input.addEventListener("change", handleTrackingInput);
     bindCasePaste(input);
+    bindExpandableEditor(input, {
+      section: "成交客户",
+      customerId: input.dataset.customerId,
+      field: getCaseFieldLabel(input.dataset.field),
+      kind: "case-tracking"
+    });
   });
   els.caseBody.querySelectorAll("[data-case-customer-field]").forEach(input => {
     input.addEventListener("input", handleCaseCustomerInput);
@@ -893,7 +899,7 @@ function getTrackingColumn(key) {
 function renderCaseCellEditor(customer, tracking, column, rowIndex) {
   if (column.type === "case-type") {
     return `<div class="row-action-shell">
-      ${renderCaseTypeEditor(customer.id, tracking.caseType)}
+      ${renderCaseTextEditor(customer.id, "caseType", tracking.caseType, "案件类型")}
       <button class="icon-action delete-row-btn" type="button" data-delete-case-row="${rowIndex}" title="删除这一行">×</button>
     </div>`;
   }
@@ -903,28 +909,20 @@ function renderCaseCellEditor(customer, tracking, column, rowIndex) {
   return renderEditor(customer.id, column.field, tracking[column.field.key], column.index);
 }
 
-function renderCaseTypeEditor(customerId, value) {
-  return `<select data-table-copy="case-field" data-customer-id="${escapeAttr(customerId)}" data-field="caseType">
-    <option value="" ${value === "" ? "selected" : ""}></option>
-    <option value="民事" ${value === "民事" ? "selected" : ""}>民事</option>
-    <option value="刑事" ${value === "刑事" ? "selected" : ""}>刑事</option>
-  </select>`;
+function renderEditor(customerId, field, value, trackingIndex = -1) {
+  if (field.type === "checkbox") {
+    return renderCaseTextEditor(customerId, field.key, value ? "是" : "否", field.label, trackingIndex);
+  }
+  return renderCaseTextEditor(customerId, field.key, value || "", field.label, trackingIndex);
 }
 
-function renderEditor(customerId, field, value, trackingIndex = -1) {
-  const base = `data-table-copy="case-field" data-customer-id="${escapeAttr(customerId)}" data-field="${escapeAttr(field.key)}"`;
-  if (field.type === "select") {
-    return `<select ${base} data-case-tracking-index="${trackingIndex}">${field.options
-      .map(option => `<option value="${escapeAttr(option)}" ${option === value ? "selected" : ""}>${escapeHtml(option)}</option>`)
-      .join("")}</select>`;
-  }
-  if (field.type === "checkbox") {
-    return `<input ${base} data-case-tracking-index="${trackingIndex}" type="checkbox" ${value ? "checked" : ""} />`;
-  }
-  if (field.type === "textarea") {
-    return `<textarea ${base} data-case-tracking-index="${trackingIndex}">${escapeHtml(value || "")}</textarea>`;
-  }
-  return `<input ${base} data-case-tracking-index="${trackingIndex}" type="${field.type}" value="${escapeAttr(value || "")}" />`;
+function renderCaseTextEditor(customerId, fieldKey, value, label, trackingIndex = -1) {
+  return `<textarea class="table-input case-tracking-input" data-table-copy="case-field" data-customer-id="${escapeAttr(customerId)}" data-field="${escapeAttr(fieldKey)}" data-case-tracking-index="${trackingIndex}" aria-label="${escapeAttr(label)}">${escapeHtml(value || "")}</textarea>`;
+}
+
+function getCaseFieldLabel(fieldKey) {
+  if (fieldKey === "caseType") return CASE_TYPE_HEADER.label;
+  return TRACKING_FIELDS.find(field => field.key === fieldKey)?.label || fieldKey;
 }
 
 function renderCaseCustomerEditor(customerId, header, value, sourceIndex = -1) {
@@ -935,7 +933,11 @@ function handleTrackingInput(event) {
   const input = event.currentTarget;
   const tracking = appState.trackingById.get(input.dataset.customerId);
   if (!tracking) return;
-  tracking[input.dataset.field] = input.type === "checkbox" ? input.checked : input.value;
+  const field = TRACKING_FIELDS.find(item => item.key === input.dataset.field);
+  tracking[input.dataset.field] =
+    field?.type === "checkbox"
+      ? normalizeTrackingPasteValue(field, input.value)
+      : input.value;
   renderSummary();
   syncOverdueNotice();
   scheduleWorkspacePersist();
@@ -1173,11 +1175,6 @@ function handleCasePaste(event) {
 }
 
 function applySingleInputPaste(input, value) {
-  if (input instanceof HTMLInputElement && input.type === "checkbox") {
-    input.checked = normalizeTrackingPasteValue({ type: "checkbox" }, value);
-    input.dispatchEvent(new Event("change", { bubbles: true }));
-    return;
-  }
   input.value = input.dataset.customerDealStatus ? normalizeDealStatusPasteValue(value) : value;
   input.dispatchEvent(new Event("input", { bubbles: true }));
   input.dispatchEvent(new Event("change", { bubbles: true }));
@@ -1216,9 +1213,6 @@ function isCopyableTableInput(element) {
 }
 
 function getCopyableInputValue(input) {
-  if (input instanceof HTMLInputElement && input.type === "checkbox") {
-    return input.checked ? "是" : "否";
-  }
   if (input instanceof HTMLSelectElement) {
     return input.selectedOptions[0]?.textContent || input.value || "";
   }

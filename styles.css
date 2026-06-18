@@ -1092,19 +1092,22 @@ td input[type="checkbox"] {
   min-width: 150px;
 }
 
-.case-customer-input {
+.case-customer-input,
+.case-tracking-input {
   min-width: 150px;
   min-height: var(--table-row-height);
   white-space: pre-wrap;
 }
 
 .table-input,
-.case-customer-input {
+.case-customer-input,
+.case-tracking-input {
   cursor: text;
 }
 
 .table-input:hover,
-.case-customer-input:hover {
+.case-customer-input:hover,
+.case-tracking-input:hover {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent 78%);
 }
 
