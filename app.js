@@ -47,7 +47,7 @@ const TRACKING_FIELDS = [
     type: "select",
     options: ["", "取保候审", "不予逮捕", "法院判决"]
   },
-  { key: "caseClosed", label: "案件结案", type: "checkbox" },
+  { key: "caseClosed", label: "案件是否结案", type: "checkbox" },
   { key: "followUpNotes", label: "补充跟踪", type: "textarea" }
 ];
 
@@ -629,6 +629,9 @@ function serializeWorkspace() {
 function restoreTrackingFieldLabels(labels) {
   if (!labels || typeof labels !== "object") return;
   for (const field of TRACKING_FIELDS) {
+    if (field.key === "caseClosed" && labels[field.key] === "案件结案") {
+      continue;
+    }
     if (typeof labels[field.key] === "string" && labels[field.key].trim()) {
       field.label = labels[field.key];
     }
@@ -775,26 +778,21 @@ function formatDateInput(date) {
 
 function renderCaseTable() {
   ensureCaseMetrics();
-  const sourceHeaders = appState.sourceHeaders;
-  const headerLabels = [
-    { type: "case-type", label: CASE_TYPE_HEADER.label },
-    ...sourceHeaders.map((header, index) => ({ type: "source", label: header, index })),
-    ...TRACKING_FIELDS.map((field, index) => ({ type: "tracking", label: field.label, index }))
-  ];
-  els.caseHead.innerHTML = `<tr>${headerLabels
-    .map((header, index) => {
+  const columns = getCaseTableColumns();
+  els.caseHead.innerHTML = `<tr>${columns
+    .map((column, index) => {
       const headerAttrs =
-        header.type === "case-type"
+        column.type === "case-type"
           ? `data-case-header-type="caseType"`
-          : header.type === "source"
-          ? `data-case-header-source-index="${header.index}"`
-          : header.type === "tracking"
-            ? `data-case-header-tracking-index="${header.index}"`
+          : column.type === "source"
+          ? `data-case-header-source-index="${column.index}"`
+          : column.type === "tracking"
+            ? `data-case-header-tracking-index="${column.index}"`
             : "";
       return `<th data-case-col-index="${index}" style="${getCaseColumnCellStyle(index)}">
         <div class="header-cell-shell">
-          <input class="header-input" ${headerAttrs} value="${escapeAttr(header.label)}" aria-label="编辑列名" />
-          ${header.type === "source" ? `<button class="icon-action delete-column-btn" type="button" data-delete-case-column="${header.index}" title="删除这一列">×</button>` : ""}
+          <input class="header-input" ${headerAttrs} value="${escapeAttr(column.label)}" aria-label="编辑列名" />
+          ${column.type === "source" ? `<button class="icon-action delete-column-btn" type="button" data-delete-case-column="${column.index}" title="删除这一列">×</button>` : ""}
           <div class="col-resize-handle" data-case-col-resize="${index}" title="拖动调整列宽"></div>
         </div>
       </th>`;
@@ -811,28 +809,16 @@ function renderCaseTable() {
     applyCaseRowHeight(row, rowIndex);
 
     const cells = [];
-    cells.push(
-      `<td class="case-row-resize-anchor" data-case-col-index="0" style="${getCaseColumnCellStyle(0)}">
-        <div class="row-action-shell">
-          ${renderCaseTypeEditor(customer.id, tracking.caseType)}
-          <button class="icon-action delete-row-btn" type="button" data-delete-case-row="${rowIndex}" title="删除这一行">×</button>
-        </div>
-        <div class="row-resize-handle" data-case-row-resize="${rowIndex}" title="拖动调整行高"></div>
-      </td>`
-    );
-    for (const [sourceIndex, header] of sourceHeaders.entries()) {
-      const columnIndex = sourceIndex + 1;
+    for (const [columnIndex, column] of columns.entries()) {
+      const rowHandle =
+        columnIndex === 0
+          ? `<div class="row-resize-handle" data-case-row-resize="${rowIndex}" title="拖动调整行高"></div>`
+          : "";
+      const cellClass = columnIndex === 0 ? ` class="case-row-resize-anchor"` : "";
       cells.push(
-        `<td data-case-col-index="${columnIndex}" style="${getCaseColumnCellStyle(columnIndex)}">
-          ${renderCaseCustomerEditor(customer.id, header, customer.data[header] ?? "", sourceIndex)}
-        </td>`
-      );
-    }
-    for (const [trackingIndex, field] of TRACKING_FIELDS.entries()) {
-      const columnIndex = sourceHeaders.length + 1 + trackingIndex;
-      cells.push(
-        `<td data-case-col-index="${columnIndex}" style="${getCaseColumnCellStyle(columnIndex)}">
-          ${renderEditor(customer.id, field, tracking[field.key], trackingIndex)}
+        `<td${cellClass} data-case-col-index="${columnIndex}" style="${getCaseColumnCellStyle(columnIndex)}">
+          ${renderCaseCellEditor(customer, tracking, column, rowIndex)}
+          ${rowHandle}
         </td>`
       );
     }
@@ -872,6 +858,49 @@ function renderCaseTable() {
   });
   bindCaseResizeHandles();
   applyCaseTableSizing();
+}
+
+function getCaseTableColumns() {
+  const columns = [{ type: "case-type", label: CASE_TYPE_HEADER.label }];
+  const sourceInsertIndex = findCustomerSourceColumnIndex();
+  for (const [sourceIndex, header] of appState.sourceHeaders.entries()) {
+    if (sourceIndex === sourceInsertIndex) {
+      columns.push(getTrackingColumn("caseClosed"));
+    }
+    columns.push({ type: "source", label: header, index: sourceIndex, header });
+  }
+  if (sourceInsertIndex < 0) {
+    columns.push(getTrackingColumn("caseClosed"));
+  }
+  TRACKING_FIELDS.forEach((field, index) => {
+    if (field.key !== "caseClosed") {
+      columns.push({ type: "tracking", label: field.label, index, field });
+    }
+  });
+  return columns;
+}
+
+function findCustomerSourceColumnIndex() {
+  return appState.sourceHeaders.findIndex(header => /客户来源|账户来源|账号来源|来源/.test(header));
+}
+
+function getTrackingColumn(key) {
+  const index = TRACKING_FIELDS.findIndex(field => field.key === key);
+  const field = TRACKING_FIELDS[index];
+  return { type: "tracking", label: field?.label || key, index, field };
+}
+
+function renderCaseCellEditor(customer, tracking, column, rowIndex) {
+  if (column.type === "case-type") {
+    return `<div class="row-action-shell">
+      ${renderCaseTypeEditor(customer.id, tracking.caseType)}
+      <button class="icon-action delete-row-btn" type="button" data-delete-case-row="${rowIndex}" title="删除这一行">×</button>
+    </div>`;
+  }
+  if (column.type === "source") {
+    return renderCaseCustomerEditor(customer.id, column.header, customer.data[column.header] ?? "", column.index);
+  }
+  return renderEditor(customer.id, column.field, tracking[column.field.key], column.index);
 }
 
 function renderCaseTypeEditor(customerId, value) {
@@ -1130,8 +1159,8 @@ function handleCasePaste(event) {
   }
 
   if (input.dataset.field) {
-    const trackingIndex = Number(input.dataset.caseTrackingIndex);
-    if (!Number.isFinite(trackingIndex)) {
+    const columnIndex = findCaseInputColumnIndex(input);
+    if (!Number.isFinite(columnIndex)) {
       applySingleInputPaste(input, grid[0]?.[0] || "");
       return;
     }
@@ -1139,7 +1168,7 @@ function handleCasePaste(event) {
       applySingleInputPaste(input, grid[0]?.[0] || "");
       return;
     }
-    applyCaseTrackingGridPaste(rowIndex, trackingIndex, grid);
+    applyCaseTableGridPaste(rowIndex, columnIndex, grid);
   }
 }
 
@@ -1241,21 +1270,50 @@ function applyCaseCustomerGridPaste(startRowIndex, startColumnIndex, grid) {
 }
 
 function applyCaseTrackingGridPaste(startRowIndex, startColumnIndex, grid) {
+  applyCaseTableGridPaste(startRowIndex, getCaseTrackingColumnIndex(startColumnIndex), grid);
+}
+
+function applyCaseTableGridPaste(startRowIndex, startColumnIndex, grid) {
+  const columns = getCaseTableColumns();
   grid.forEach((rowValues, rowOffset) => {
     const customer = appState.closedCustomers[startRowIndex + rowOffset];
     if (!customer) return;
     const tracking = appState.trackingById.get(customer.id);
     if (!tracking) return;
     rowValues.forEach((value, columnOffset) => {
-      const field = TRACKING_FIELDS[startColumnIndex + columnOffset];
-      if (!field) return;
-      tracking[field.key] = normalizeTrackingPasteValue(field, value);
+      const column = columns[startColumnIndex + columnOffset];
+      if (!column) return;
+      applyCaseColumnPasteValue(customer, tracking, column, value);
     });
   });
   renderSummary();
   renderCaseTable();
+  renderCustomerTable();
   scheduleExportLengthRefresh();
   scheduleWorkspacePersist();
+}
+
+function applyCaseColumnPasteValue(customer, tracking, column, value) {
+  if (column.type === "case-type") {
+    tracking.caseType = value;
+    return;
+  }
+  if (column.type === "source") {
+    customer.data[column.header] = value;
+    return;
+  }
+  if (column.type === "tracking") {
+    tracking[column.field.key] = normalizeTrackingPasteValue(column.field, value);
+  }
+}
+
+function findCaseInputColumnIndex(input) {
+  const cell = input.closest("[data-case-col-index]");
+  return Number(cell?.dataset.caseColIndex);
+}
+
+function getCaseTrackingColumnIndex(trackingIndex) {
+  return getCaseTableColumns().findIndex(column => column.type === "tracking" && column.index === trackingIndex);
 }
 
 function normalizeTrackingPasteValue(field, value) {
@@ -1538,7 +1596,7 @@ function ensureCaseMetrics() {
 }
 
 function getCaseColumnCount() {
-  return appState.sourceHeaders.length + TRACKING_FIELDS.length + 1;
+  return getCaseTableColumns().length;
 }
 
 function getColumnCellStyle(index) {
@@ -1769,17 +1827,15 @@ function applyTheme() {
 
 function buildManagedWorkbook() {
   const allHeaders = appState.sourceHeaders;
-  const caseHeaders = ["案件状态", "客户等级", "来源表", ...allHeaders, ...TRACKING_FIELDS.map(field => field.label)];
+  const caseColumns = getCaseTableColumns();
+  const caseHeaders = ["案件状态", "客户等级", "来源表", ...caseColumns.map(column => column.label)];
   const caseRows = appState.closedCustomers.map(customer => {
     const tracking = appState.trackingById.get(customer.id);
     return [
       tracking.caseClosed ? "已结案" : "未结案",
       customer.grade,
       customer.sheetName,
-      ...appState.sourceHeaders.map(header => customer.data[header] ?? ""),
-      ...TRACKING_FIELDS.map(field =>
-        field.type === "checkbox" ? (tracking[field.key] ? "是" : "否") : tracking[field.key] || ""
-      )
+      ...caseColumns.map(column => getCaseColumnExportValue(customer, tracking, column))
     ];
   });
   const customerRows = getRawCustomerRows();
@@ -1798,6 +1854,17 @@ function buildManagedWorkbook() {
       rows: [allHeaders, ...customerRows]
     }
   ]);
+}
+
+function getCaseColumnExportValue(customer, tracking, column) {
+  if (column.type === "case-type") return tracking.caseType || "";
+  if (column.type === "source") return customer.data[column.header] ?? "";
+  if (column.type === "tracking") {
+    return column.field.type === "checkbox"
+      ? (tracking[column.field.key] ? "是" : "否")
+      : tracking[column.field.key] || "";
+  }
+  return "";
 }
 
 async function parseXlsx(buffer) {
