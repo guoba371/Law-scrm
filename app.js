@@ -1352,6 +1352,7 @@ function handleDeleteRow(event) {
   const rowIndex = Number(event.currentTarget.dataset.deleteRow);
   const customer = appState.customers[rowIndex];
   if (!customer) return;
+  if (!confirmDelete("确认删除这一行客户数据吗？删除后该行的案件跟踪信息也会一起移除。")) return;
   deleteCustomerById(customer.id);
 }
 
@@ -1359,6 +1360,9 @@ function handleDeleteColumn(event) {
   const columnIndex = Number(event.currentTarget.dataset.deleteColumn);
   if (!Number.isFinite(columnIndex) || columnIndex <= 0) return;
   const sourceIndex = columnIndex - 1;
+  const header = appState.sourceHeaders[sourceIndex];
+  if (!header) return;
+  if (!confirmDelete(`确认删除「${header}」这一列吗？所有客户这一列的数据都会被移除。`)) return;
   deleteSourceColumn(sourceIndex);
 }
 
@@ -1366,12 +1370,20 @@ function handleDeleteCaseRow(event) {
   const rowIndex = Number(event.currentTarget.dataset.deleteCaseRow);
   const customer = appState.closedCustomers[rowIndex];
   if (!customer) return;
+  if (!confirmDelete("确认删除这一行成交客户案件数据吗？删除后对应客户行也会一起移除。")) return;
   deleteCustomerById(customer.id);
 }
 
 function handleDeleteCaseColumn(event) {
   const sourceIndex = Number(event.currentTarget.dataset.deleteCaseColumn);
+  const header = appState.sourceHeaders[sourceIndex];
+  if (!header) return;
+  if (!confirmDelete(`确认删除「${header}」这一列吗？所有客户这一列的数据都会被移除。`)) return;
   deleteSourceColumn(sourceIndex);
+}
+
+function confirmDelete(message) {
+  return window.confirm(message);
 }
 
 function handleCustomerHeaderInput(event) {
