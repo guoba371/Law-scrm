@@ -251,6 +251,7 @@ window.addEventListener("keydown", event => {
     closeEditorModal();
   }
 });
+document.addEventListener("copy", handleTableCopy);
 
 applyTheme();
 syncUploadProgress();
@@ -874,7 +875,7 @@ function renderCaseTable() {
 }
 
 function renderCaseTypeEditor(customerId, value) {
-  return `<select data-customer-id="${escapeAttr(customerId)}" data-field="caseType">
+  return `<select data-table-copy="case-field" data-customer-id="${escapeAttr(customerId)}" data-field="caseType">
     <option value="" ${value === "" ? "selected" : ""}></option>
     <option value="民事" ${value === "民事" ? "selected" : ""}>民事</option>
     <option value="刑事" ${value === "刑事" ? "selected" : ""}>刑事</option>
@@ -882,7 +883,7 @@ function renderCaseTypeEditor(customerId, value) {
 }
 
 function renderEditor(customerId, field, value, trackingIndex = -1) {
-  const base = `data-customer-id="${escapeAttr(customerId)}" data-field="${escapeAttr(field.key)}"`;
+  const base = `data-table-copy="case-field" data-customer-id="${escapeAttr(customerId)}" data-field="${escapeAttr(field.key)}"`;
   if (field.type === "select") {
     return `<select ${base} data-case-tracking-index="${trackingIndex}">${field.options
       .map(option => `<option value="${escapeAttr(option)}" ${option === value ? "selected" : ""}>${escapeHtml(option)}</option>`)
@@ -898,7 +899,7 @@ function renderEditor(customerId, field, value, trackingIndex = -1) {
 }
 
 function renderCaseCustomerEditor(customerId, header, value, sourceIndex = -1) {
-  return `<textarea class="table-input case-customer-input" data-customer-id="${escapeAttr(customerId)}" data-case-customer-field="${escapeAttr(header)}" data-case-source-index="${sourceIndex}">${escapeHtml(value || "")}</textarea>`;
+  return `<textarea class="table-input case-customer-input" data-table-copy="case-customer" data-customer-id="${escapeAttr(customerId)}" data-case-customer-field="${escapeAttr(header)}" data-case-source-index="${sourceIndex}">${escapeHtml(value || "")}</textarea>`;
 }
 
 function handleTrackingInput(event) {
@@ -1031,6 +1032,7 @@ function renderCustomerTable() {
   });
   els.customerBody.querySelectorAll("[data-customer-deal-status]").forEach(input => {
     input.addEventListener("change", handleCustomerDealStatusChange);
+    bindCustomerPaste(input);
   });
   els.customerBody.querySelectorAll("[data-delete-row]").forEach(button => {
     button.addEventListener("click", handleDeleteRow);
@@ -1046,11 +1048,11 @@ function renderCustomerTable() {
 }
 
 function renderCustomerDataEditor(customerId, header, value, sourceIndex = -1) {
-  return `<textarea class="table-input" data-customer-id="${escapeAttr(customerId)}" data-customer-field="${escapeAttr(header)}" data-customer-source-index="${sourceIndex}">${escapeHtml(value || "")}</textarea>`;
+  return `<textarea class="table-input" data-table-copy="customer" data-customer-id="${escapeAttr(customerId)}" data-customer-field="${escapeAttr(header)}" data-customer-source-index="${sourceIndex}">${escapeHtml(value || "")}</textarea>`;
 }
 
 function renderDealStatusEditor(customerId, gradeKey) {
-  return `<select class="deal-status-select" data-customer-id="${escapeAttr(customerId)}" data-customer-deal-status="true">
+  return `<select class="deal-status-select" data-table-copy="customer-status" data-customer-id="${escapeAttr(customerId)}" data-customer-deal-status="true">
     <option value="unclosed" ${gradeKey === "unclosed" || gradeKey === "unknown" ? "selected" : ""}>未成交</option>
     <option value="valuable" ${gradeKey === "valuable" ? "selected" : ""}>潜在客户</option>
     <option value="closed" ${gradeKey === "closed" ? "selected" : ""}>成交</option>
@@ -1071,7 +1073,7 @@ function handleCustomerInput(event) {
 }
 
 function bindCustomerPaste(input) {
-  if (!(input instanceof HTMLTextAreaElement)) return;
+  if (!(input instanceof HTMLTextAreaElement || input instanceof HTMLSelectElement)) return;
   input.addEventListener("paste", handleCustomerPaste);
 }
 
@@ -1090,12 +1092,21 @@ function bindCasePaste(input) {
 
 function handleCustomerPaste(event) {
   const input = event.currentTarget;
+  const grid = parseClipboardGrid(event.clipboardData?.getData("text/plain") || "");
+  if (!grid.length) return;
+  if (input.dataset.customerDealStatus) {
+    event.preventDefault();
+    applySingleInputPaste(input, grid[0]?.[0] || "");
+    return;
+  }
   const rowIndex = appState.customers.findIndex(customer => customer.id === input.dataset.customerId);
   const columnIndex = Number(input.dataset.customerSourceIndex);
   if (rowIndex < 0 || !Number.isFinite(columnIndex)) return;
-  const grid = parseClipboardGrid(event.clipboardData?.getData("text/plain") || "");
-  if (!isMultiCellPaste(grid)) return;
   event.preventDefault();
+  if (!isMultiCellPaste(grid)) {
+    applySingleInputPaste(input, grid[0]?.[0] || "");
+    return;
+  }
   applyCustomerGridPaste(rowIndex, columnIndex, grid);
 }
 
@@ -1104,21 +1115,85 @@ function handleCasePaste(event) {
   const rowIndex = appState.closedCustomers.findIndex(customer => customer.id === input.dataset.customerId);
   if (rowIndex < 0) return;
   const grid = parseClipboardGrid(event.clipboardData?.getData("text/plain") || "");
-  if (!isMultiCellPaste(grid)) return;
+  if (!grid.length) return;
   event.preventDefault();
 
   if (input.dataset.caseCustomerField) {
     const columnIndex = Number(input.dataset.caseSourceIndex);
     if (!Number.isFinite(columnIndex)) return;
+    if (!isMultiCellPaste(grid)) {
+      applySingleInputPaste(input, grid[0]?.[0] || "");
+      return;
+    }
     applyCaseCustomerGridPaste(rowIndex, columnIndex, grid);
     return;
   }
 
   if (input.dataset.field) {
     const trackingIndex = Number(input.dataset.caseTrackingIndex);
-    if (!Number.isFinite(trackingIndex)) return;
+    if (!Number.isFinite(trackingIndex)) {
+      applySingleInputPaste(input, grid[0]?.[0] || "");
+      return;
+    }
+    if (!isMultiCellPaste(grid)) {
+      applySingleInputPaste(input, grid[0]?.[0] || "");
+      return;
+    }
     applyCaseTrackingGridPaste(rowIndex, trackingIndex, grid);
   }
+}
+
+function applySingleInputPaste(input, value) {
+  if (input instanceof HTMLInputElement && input.type === "checkbox") {
+    input.checked = normalizeTrackingPasteValue({ type: "checkbox" }, value);
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    return;
+  }
+  input.value = input.dataset.customerDealStatus ? normalizeDealStatusPasteValue(value) : value;
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+function normalizeDealStatusPasteValue(value) {
+  const text = String(value || "").trim();
+  if (["closed", "成交", "成交客户"].includes(text)) return "closed";
+  if (["valuable", "有价值潜在客户", "潜在客户"].includes(text)) return "valuable";
+  if (["unclosed", "未成交", "潜在客户未成交", "未识别"].includes(text)) return "unclosed";
+  return text;
+}
+
+function handleTableCopy(event) {
+  const selection = window.getSelection();
+  if (selection && !selection.isCollapsed && String(selection).trim()) return;
+
+  const active = document.activeElement;
+  if (!isCopyableTableInput(active)) return;
+
+  const text = getCopyableInputValue(active);
+  if (event.clipboardData) {
+    event.clipboardData.setData("text/plain", text);
+    event.preventDefault();
+    return;
+  }
+  navigator.clipboard?.writeText(text).catch(() => {});
+}
+
+function isCopyableTableInput(element) {
+  return (
+    element instanceof HTMLInputElement ||
+    element instanceof HTMLTextAreaElement ||
+    element instanceof HTMLSelectElement
+  ) && Boolean(element.dataset.tableCopy);
+}
+
+function getCopyableInputValue(input) {
+  if (input instanceof HTMLInputElement && input.type === "checkbox") {
+    return input.checked ? "是" : "否";
+  }
+  if (input instanceof HTMLSelectElement) {
+    return input.selectedOptions[0]?.textContent || input.value || "";
+  }
+  return input.value || "";
 }
 
 function parseClipboardGrid(text) {
