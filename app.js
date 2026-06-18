@@ -105,6 +105,7 @@ const els = {
   allCustomersHint: document.getElementById("allCustomersHint"),
   allCustomersInlineStats: document.getElementById("allCustomersInlineStats"),
   emptyState: document.getElementById("emptyState"),
+  caseTableToolbar: document.getElementById("caseTableToolbar"),
   caseTableWrap: document.getElementById("caseTableWrap"),
   caseHead: document.getElementById("caseHead"),
   caseBody: document.getElementById("caseBody"),
@@ -120,6 +121,8 @@ const els = {
   columnWidthRange: document.getElementById("columnWidthRange"),
   addCustomerRowBtn: document.getElementById("addCustomerRowBtn"),
   addCustomerColumnBtn: document.getElementById("addCustomerColumnBtn"),
+  addCaseRowBtn: document.getElementById("addCaseRowBtn"),
+  addCaseColumnBtn: document.getElementById("addCaseColumnBtn"),
   uploadStatus: document.getElementById("uploadStatus"),
   uploadProgressBar: document.getElementById("uploadProgressBar"),
   uploadProgressText: document.getElementById("uploadProgressText"),
@@ -206,6 +209,14 @@ els.addCustomerRowBtn.addEventListener("click", () => {
 
 els.addCustomerColumnBtn.addEventListener("click", () => {
   addCustomerColumn();
+});
+
+els.addCaseRowBtn?.addEventListener("click", () => {
+  addCaseRow();
+});
+
+els.addCaseColumnBtn?.addEventListener("click", () => {
+  addCaseColumn();
 });
 
 els.noticeBtn?.addEventListener("click", () => {
@@ -521,7 +532,8 @@ function syncClosedCustomers() {
 function render() {
   els.downloadBtn.disabled = !appState.customers.length;
   els.emptyState.classList.toggle("hidden", appState.customers.length > 0);
-  els.caseTableWrap.classList.toggle("hidden", appState.customers.length === 0);
+  els.caseTableToolbar?.classList.remove("hidden");
+  els.caseTableWrap.classList.remove("hidden");
   els.allCustomersPanel.classList.toggle("hidden", appState.customers.length === 0);
   els.allCustomersPage.classList.toggle("hidden", appState.activeView !== "all");
   els.closedCustomersPage.classList.toggle("hidden", appState.activeView !== "closed");
@@ -700,6 +712,7 @@ function renderCaseTable() {
       return `<th data-case-col-index="${index}" style="${getCaseColumnCellStyle(index)}">
         <div class="header-cell-shell">
           <input class="header-input" ${headerAttrs} value="${escapeAttr(header.label)}" aria-label="编辑列名" />
+          ${header.type === "source" ? `<button class="icon-action delete-column-btn" type="button" data-delete-case-column="${header.index}" title="删除这一列">×</button>` : ""}
           <div class="col-resize-handle" data-case-col-resize="${index}" title="拖动调整列宽"></div>
         </div>
       </th>`;
@@ -718,7 +731,10 @@ function renderCaseTable() {
     const cells = [];
     cells.push(
       `<td class="case-row-resize-anchor" data-case-col-index="0" style="${getCaseColumnCellStyle(0)}">
-        ${renderCaseTypeEditor(customer.id, tracking.caseType)}
+        <div class="row-action-shell">
+          ${renderCaseTypeEditor(customer.id, tracking.caseType)}
+          <button class="icon-action delete-row-btn" type="button" data-delete-case-row="${rowIndex}" title="删除这一行">×</button>
+        </div>
         <div class="row-resize-handle" data-case-row-resize="${rowIndex}" title="拖动调整行高"></div>
       </td>`
     );
@@ -765,6 +781,12 @@ function renderCaseTable() {
   });
   els.caseHead.querySelectorAll("[data-case-header-type]").forEach(input => {
     input.addEventListener("change", handleCaseTypeHeaderChange);
+  });
+  els.caseHead.querySelectorAll("[data-delete-case-column]").forEach(button => {
+    button.addEventListener("click", handleDeleteCaseColumn);
+  });
+  els.caseBody.querySelectorAll("[data-delete-case-row]").forEach(button => {
+    button.addEventListener("click", handleDeleteCaseRow);
   });
   bindCaseResizeHandles();
   applyCaseTableSizing();
@@ -1109,26 +1131,26 @@ function handleDeleteRow(event) {
   const rowIndex = Number(event.currentTarget.dataset.deleteRow);
   const customer = appState.customers[rowIndex];
   if (!customer) return;
-  appState.customers.splice(rowIndex, 1);
-  appState.rowHeights.splice(rowIndex, 1);
-  appState.trackingById.delete(customer.id);
-  syncClosedCustomers();
-  render();
+  deleteCustomerById(customer.id);
 }
 
 function handleDeleteColumn(event) {
   const columnIndex = Number(event.currentTarget.dataset.deleteColumn);
   if (!Number.isFinite(columnIndex) || columnIndex <= 0) return;
   const sourceIndex = columnIndex - 1;
-  const header = appState.sourceHeaders[sourceIndex];
-  if (!header || header === DEAL_AMOUNT_HEADER) return;
-  appState.sourceHeaders.splice(sourceIndex, 1);
-  appState.columnWidths.splice(columnIndex, 1);
-  appState.caseColumnWidths.splice(columnIndex, 1);
-  for (const customer of appState.customers) {
-    delete customer.data[header];
-  }
-  render();
+  deleteSourceColumn(sourceIndex);
+}
+
+function handleDeleteCaseRow(event) {
+  const rowIndex = Number(event.currentTarget.dataset.deleteCaseRow);
+  const customer = appState.closedCustomers[rowIndex];
+  if (!customer) return;
+  deleteCustomerById(customer.id);
+}
+
+function handleDeleteCaseColumn(event) {
+  const sourceIndex = Number(event.currentTarget.dataset.deleteCaseColumn);
+  deleteSourceColumn(sourceIndex);
 }
 
 function handleCustomerHeaderInput(event) {
@@ -1216,6 +1238,37 @@ function addCustomerRow() {
 }
 
 function addCustomerColumn() {
+  addSourceColumn();
+}
+
+function addCaseRow() {
+  if (!appState.sourceHeaders.length) {
+    appState.sourceHeaders = ["客户姓名", "客户电话"];
+    resetCustomerMetrics();
+  }
+  const emptyData = Object.fromEntries(appState.sourceHeaders.map(header => [header, ""]));
+  const customer = {
+    id: `manual-case-row-${Date.now()}-${appState.customers.length}`,
+    sheetName: "成交客户案件跟踪",
+    rowNumber: appState.customers.length + 1,
+    gradeKey: "closed",
+    grade: CUSTOMER_GRADE.closed,
+    data: emptyData,
+    values: appState.sourceHeaders.map(() => "")
+  };
+  appState.customers.push(customer);
+  appState.rowHeights.push(appState.rowSpacing);
+  syncClosedCustomers();
+  seedTrackingRows();
+  appState.caseRowHeights.push(appState.rowSpacing);
+  render();
+}
+
+function addCaseColumn() {
+  addSourceColumn();
+}
+
+function addSourceColumn() {
   const baseName = "新增列";
   let header = baseName;
   let suffix = 1;
@@ -1230,6 +1283,33 @@ function addCustomerColumn() {
   appState.caseColumnWidths.splice(insertAt + 1, 0, appState.columnWidth);
   for (const customer of appState.customers) {
     customer.data[header] = "";
+  }
+  render();
+}
+
+function deleteCustomerById(customerId) {
+  const customerIndex = appState.customers.findIndex(customer => customer.id === customerId);
+  if (customerIndex < 0) return;
+  const closedIndex = appState.closedCustomers.findIndex(customer => customer.id === customerId);
+  appState.customers.splice(customerIndex, 1);
+  appState.rowHeights.splice(customerIndex, 1);
+  if (closedIndex >= 0) {
+    appState.caseRowHeights.splice(closedIndex, 1);
+  }
+  appState.trackingById.delete(customerId);
+  syncClosedCustomers();
+  render();
+}
+
+function deleteSourceColumn(sourceIndex) {
+  if (!Number.isFinite(sourceIndex) || sourceIndex < 0) return;
+  const header = appState.sourceHeaders[sourceIndex];
+  if (!header || header === DEAL_AMOUNT_HEADER) return;
+  appState.sourceHeaders.splice(sourceIndex, 1);
+  appState.columnWidths.splice(sourceIndex + 1, 1);
+  appState.caseColumnWidths.splice(sourceIndex + 1, 1);
+  for (const customer of appState.customers) {
+    delete customer.data[header];
   }
   render();
 }
