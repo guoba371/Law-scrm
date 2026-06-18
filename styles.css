@@ -1080,6 +1080,19 @@ td input[type="checkbox"] {
   accent-color: var(--accent);
 }
 
+.case-checkbox-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: var(--row-size, var(--table-row-height));
+  color: inherit;
+  font-weight: 650;
+}
+
+.case-checkbox-cell input {
+  cursor: pointer;
+}
+
 .read-cell {
   min-width: 150px;
   max-width: 280px;

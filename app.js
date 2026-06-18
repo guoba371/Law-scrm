@@ -911,7 +911,7 @@ function renderCaseCellEditor(customer, tracking, column, rowIndex) {
 
 function renderEditor(customerId, field, value, trackingIndex = -1) {
   if (field.type === "checkbox") {
-    return renderCaseTextEditor(customerId, field.key, value ? "是" : "否", field.label, trackingIndex);
+    return renderCaseCheckboxEditor(customerId, field.key, value, field.label, trackingIndex);
   }
   return renderCaseTextEditor(customerId, field.key, value || "", field.label, trackingIndex);
 }
@@ -927,6 +927,13 @@ function renderCaseTypeEditor(customerId, value) {
 
 function renderCaseTextEditor(customerId, fieldKey, value, label, trackingIndex = -1) {
   return `<textarea class="table-input case-tracking-input" data-table-copy="case-field" data-customer-id="${escapeAttr(customerId)}" data-field="${escapeAttr(fieldKey)}" data-case-tracking-index="${trackingIndex}" aria-label="${escapeAttr(label)}">${escapeHtml(value || "")}</textarea>`;
+}
+
+function renderCaseCheckboxEditor(customerId, fieldKey, checked, label, trackingIndex = -1) {
+  return `<label class="case-checkbox-cell">
+    <input data-table-copy="case-field" data-customer-id="${escapeAttr(customerId)}" data-field="${escapeAttr(fieldKey)}" data-case-tracking-index="${trackingIndex}" type="checkbox" ${checked ? "checked" : ""} aria-label="${escapeAttr(label)}" />
+    <span>${checked ? "是" : "否"}</span>
+  </label>`;
 }
 
 function getCaseFieldLabel(fieldKey) {
@@ -947,7 +954,7 @@ function handleTrackingInput(event) {
     input.dataset.field === "caseType"
       ? normalizeCaseTypePasteValue(input.value)
       : field?.type === "checkbox"
-      ? normalizeTrackingPasteValue(field, input.value)
+      ? input.checked
       : input.value;
   renderSummary();
   syncOverdueNotice();
@@ -957,6 +964,9 @@ function handleTrackingInput(event) {
     row.classList.toggle("open-case", !tracking.caseClosed);
     row.classList.toggle("case-row-open", !tracking.caseClosed);
     row.classList.toggle("case-row-completed", tracking.caseClosed);
+  }
+  if (field?.type === "checkbox") {
+    input.closest(".case-checkbox-cell")?.querySelector("span")?.replaceChildren(input.checked ? "是" : "否");
   }
 }
 
@@ -1186,6 +1196,11 @@ function handleCasePaste(event) {
 }
 
 function applySingleInputPaste(input, value) {
+  if (input instanceof HTMLInputElement && input.type === "checkbox") {
+    input.checked = normalizeTrackingPasteValue({ type: "checkbox" }, value);
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    return;
+  }
   input.value =
     input.dataset.customerDealStatus
       ? normalizeDealStatusPasteValue(value)
@@ -1237,6 +1252,9 @@ function isCopyableTableInput(element) {
 }
 
 function getCopyableInputValue(input) {
+  if (input instanceof HTMLInputElement && input.type === "checkbox") {
+    return input.checked ? "是" : "否";
+  }
   if (input instanceof HTMLSelectElement) {
     return input.selectedOptions[0]?.textContent || input.value || "";
   }
