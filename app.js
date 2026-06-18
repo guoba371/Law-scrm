@@ -51,6 +51,7 @@ const TRACKING_FIELDS = [
   { key: "followUpNotes", label: "补充跟踪", type: "textarea" }
 ];
 
+const CASE_TYPE_HEADER = { label: "案件类型" };
 const HEADER_KEYWORD_RE = /客户|姓名|来源|电话|案件|备注|金额|日期|时间|律师|助理|跟进|合同|代理|结果|开庭|立案|发生地|案由/;
 
 const DEFAULT_SOURCE_FILE = "2026年每月客户统计.xlsx";
@@ -69,6 +70,8 @@ const appState = {
   sourceHeaders: [],
   columnWidths: [],
   rowHeights: [],
+  caseColumnWidths: [],
+  caseRowHeights: [],
   trackingById: new Map(),
   activeView: "all",
   uploadProgress: 0,
@@ -180,6 +183,7 @@ els.closedCustomersTabBtn.addEventListener("click", () => {
 els.rowSpacingRange.addEventListener("input", event => {
   appState.rowSpacing = Number(event.currentTarget.value);
   appState.rowHeights = appState.customers.map(() => appState.rowSpacing);
+  appState.caseRowHeights = appState.closedCustomers.map(() => appState.rowSpacing);
   syncTableMetrics();
 });
 
@@ -187,6 +191,10 @@ els.columnWidthRange.addEventListener("input", event => {
   appState.columnWidth = Number(event.currentTarget.value);
   appState.columnWidths = Array.from(
     { length: appState.sourceHeaders.length + 1 },
+    () => appState.columnWidth
+  );
+  appState.caseColumnWidths = Array.from(
+    { length: getCaseColumnCount() },
     () => appState.columnWidth
   );
   syncTableMetrics();
@@ -672,28 +680,63 @@ function formatDateInput(date) {
 }
 
 function renderCaseTable() {
+  ensureCaseMetrics();
   const sourceHeaders = appState.sourceHeaders;
   const headerLabels = [
-    "案件类型",
-    ...sourceHeaders,
-    ...TRACKING_FIELDS.map(field => field.label)
+    { type: "case-type", label: CASE_TYPE_HEADER.label },
+    ...sourceHeaders.map((header, index) => ({ type: "source", label: header, index })),
+    ...TRACKING_FIELDS.map((field, index) => ({ type: "tracking", label: field.label, index }))
   ];
-  els.caseHead.innerHTML = `<tr>${headerLabels.map(label => `<th>${escapeHtml(label)}</th>`).join("")}</tr>`;
+  els.caseHead.innerHTML = `<tr>${headerLabels
+    .map((header, index) => {
+      const headerAttrs =
+        header.type === "case-type"
+          ? `data-case-header-type="caseType"`
+          : header.type === "source"
+          ? `data-case-header-source-index="${header.index}"`
+          : header.type === "tracking"
+            ? `data-case-header-tracking-index="${header.index}"`
+            : "";
+      return `<th data-case-col-index="${index}" style="${getCaseColumnCellStyle(index)}">
+        <div class="header-cell-shell">
+          <input class="header-input" ${headerAttrs} value="${escapeAttr(header.label)}" aria-label="编辑列名" />
+          <div class="col-resize-handle" data-case-col-resize="${index}" title="拖动调整列宽"></div>
+        </div>
+      </th>`;
+    })
+    .join("")}</tr>`;
   els.caseBody.innerHTML = "";
 
-  for (const customer of appState.closedCustomers) {
+  for (const [rowIndex, customer] of appState.closedCustomers.entries()) {
     const tracking = appState.trackingById.get(customer.id);
     const row = document.createElement("tr");
     row.className = `grade-closed case-row ${tracking.caseClosed ? "case-row-completed" : "open-case case-row-open"}`;
     row.dataset.customerId = customer.id;
+    row.dataset.caseRowIndex = String(rowIndex);
+    applyCaseRowHeight(row, rowIndex);
 
     const cells = [];
-    cells.push(`<td>${renderCaseTypeEditor(customer.id, tracking.caseType)}</td>`);
+    cells.push(
+      `<td class="case-row-resize-anchor" data-case-col-index="0" style="${getCaseColumnCellStyle(0)}">
+        ${renderCaseTypeEditor(customer.id, tracking.caseType)}
+        <div class="row-resize-handle" data-case-row-resize="${rowIndex}" title="拖动调整行高"></div>
+      </td>`
+    );
     for (const [sourceIndex, header] of sourceHeaders.entries()) {
-      cells.push(`<td>${renderCaseCustomerEditor(customer.id, header, customer.data[header] ?? "", sourceIndex)}</td>`);
+      const columnIndex = sourceIndex + 1;
+      cells.push(
+        `<td data-case-col-index="${columnIndex}" style="${getCaseColumnCellStyle(columnIndex)}">
+          ${renderCaseCustomerEditor(customer.id, header, customer.data[header] ?? "", sourceIndex)}
+        </td>`
+      );
     }
     for (const [trackingIndex, field] of TRACKING_FIELDS.entries()) {
-      cells.push(`<td>${renderEditor(customer.id, field, tracking[field.key], trackingIndex)}</td>`);
+      const columnIndex = sourceHeaders.length + 1 + trackingIndex;
+      cells.push(
+        `<td data-case-col-index="${columnIndex}" style="${getCaseColumnCellStyle(columnIndex)}">
+          ${renderEditor(customer.id, field, tracking[field.key], trackingIndex)}
+        </td>`
+      );
     }
     row.innerHTML = cells.join("");
     els.caseBody.appendChild(row);
@@ -714,6 +757,17 @@ function renderCaseTable() {
       kind: "case-customer"
     });
   });
+  els.caseHead.querySelectorAll("[data-case-header-source-index]").forEach(input => {
+    input.addEventListener("change", handleCaseSourceHeaderChange);
+  });
+  els.caseHead.querySelectorAll("[data-case-header-tracking-index]").forEach(input => {
+    input.addEventListener("change", handleCaseTrackingHeaderChange);
+  });
+  els.caseHead.querySelectorAll("[data-case-header-type]").forEach(input => {
+    input.addEventListener("change", handleCaseTypeHeaderChange);
+  });
+  bindCaseResizeHandles();
+  applyCaseTableSizing();
 }
 
 function renderCaseTypeEditor(customerId, value) {
@@ -1070,6 +1124,7 @@ function handleDeleteColumn(event) {
   if (!header || header === DEAL_AMOUNT_HEADER) return;
   appState.sourceHeaders.splice(sourceIndex, 1);
   appState.columnWidths.splice(columnIndex, 1);
+  appState.caseColumnWidths.splice(columnIndex, 1);
   for (const customer of appState.customers) {
     delete customer.data[header];
   }
@@ -1097,6 +1152,48 @@ function handleCustomerHeaderInput(event) {
   }
 
   render();
+}
+
+function handleCaseSourceHeaderChange(event) {
+  const input = event.currentTarget;
+  const sourceIndex = Number(input.dataset.caseHeaderSourceIndex);
+  const oldHeader = appState.sourceHeaders[sourceIndex];
+  const newHeader = String(input.value || "").trim() || oldHeader;
+  if (!oldHeader) return;
+  if (oldHeader === DEAL_AMOUNT_HEADER) {
+    input.value = DEAL_AMOUNT_HEADER;
+    return;
+  }
+  if (oldHeader === newHeader) return;
+  if (appState.sourceHeaders.includes(newHeader)) {
+    input.value = oldHeader;
+    return;
+  }
+
+  appState.sourceHeaders[sourceIndex] = newHeader;
+  for (const customer of appState.customers) {
+    customer.data[newHeader] = customer.data[oldHeader] ?? "";
+    delete customer.data[oldHeader];
+  }
+  render();
+}
+
+function handleCaseTrackingHeaderChange(event) {
+  const input = event.currentTarget;
+  const trackingIndex = Number(input.dataset.caseHeaderTrackingIndex);
+  const field = TRACKING_FIELDS[trackingIndex];
+  if (!field) return;
+  const newLabel = String(input.value || "").trim() || field.label;
+  field.label = newLabel;
+  renderCaseTable();
+  scheduleExportLengthRefresh();
+}
+
+function handleCaseTypeHeaderChange(event) {
+  const input = event.currentTarget;
+  CASE_TYPE_HEADER.label = String(input.value || "").trim() || CASE_TYPE_HEADER.label;
+  renderCaseTable();
+  scheduleExportLengthRefresh();
 }
 
 function findCustomer(customerId) {
@@ -1130,6 +1227,7 @@ function addCustomerColumn() {
   const insertAt = dealAmountIndex >= 0 ? dealAmountIndex : appState.sourceHeaders.length;
   appState.sourceHeaders.splice(insertAt, 0, header);
   appState.columnWidths.splice(insertAt + 1, 0, appState.columnWidth);
+  appState.caseColumnWidths.splice(insertAt + 1, 0, appState.columnWidth);
   for (const customer of appState.customers) {
     customer.data[header] = "";
   }
@@ -1142,6 +1240,7 @@ function syncTableMetrics() {
   if (els.rowSpacingRange) els.rowSpacingRange.value = String(appState.rowSpacing);
   if (els.columnWidthRange) els.columnWidthRange.value = String(appState.columnWidth);
   applyCustomerTableSizing();
+  applyCaseTableSizing();
 }
 
 function resetCustomerMetrics() {
@@ -1150,6 +1249,7 @@ function resetCustomerMetrics() {
     () => appState.columnWidth
   );
   appState.rowHeights = appState.customers.map(() => appState.rowSpacing);
+  resetCaseMetrics();
 }
 
 function ensureCustomerMetrics() {
@@ -1168,13 +1268,51 @@ function ensureCustomerMetrics() {
   }
 }
 
+function resetCaseMetrics() {
+  appState.caseColumnWidths = Array.from(
+    { length: getCaseColumnCount() },
+    () => appState.columnWidth
+  );
+  appState.caseRowHeights = appState.closedCustomers.map(() => appState.rowSpacing);
+}
+
+function ensureCaseMetrics() {
+  const desiredColumnCount = getCaseColumnCount();
+  while (appState.caseColumnWidths.length < desiredColumnCount) {
+    appState.caseColumnWidths.push(appState.columnWidth);
+  }
+  if (appState.caseColumnWidths.length > desiredColumnCount) {
+    appState.caseColumnWidths = appState.caseColumnWidths.slice(0, desiredColumnCount);
+  }
+  while (appState.caseRowHeights.length < appState.closedCustomers.length) {
+    appState.caseRowHeights.push(appState.rowSpacing);
+  }
+  if (appState.caseRowHeights.length > appState.closedCustomers.length) {
+    appState.caseRowHeights = appState.caseRowHeights.slice(0, appState.closedCustomers.length);
+  }
+}
+
+function getCaseColumnCount() {
+  return appState.sourceHeaders.length + TRACKING_FIELDS.length + 1;
+}
+
 function getColumnCellStyle(index) {
   const width = appState.columnWidths[index] || appState.columnWidth;
   return `width:${width}px;min-width:${width}px;`;
 }
 
+function getCaseColumnCellStyle(index) {
+  const width = appState.caseColumnWidths[index] || appState.columnWidth;
+  return `width:${width}px;min-width:${width}px;`;
+}
+
 function applyCustomerRowHeight(row, rowIndex) {
   const height = appState.rowHeights[rowIndex] || appState.rowSpacing;
+  row.style.setProperty("--row-size", `${height}px`);
+}
+
+function applyCaseRowHeight(row, rowIndex) {
+  const height = appState.caseRowHeights[rowIndex] || appState.rowSpacing;
   row.style.setProperty("--row-size", `${height}px`);
 }
 
@@ -1194,12 +1332,37 @@ function applyCustomerTableSizing() {
   });
 }
 
+function applyCaseTableSizing() {
+  if (!els.caseHead || !els.caseBody) return;
+  ensureCaseMetrics();
+
+  appState.caseColumnWidths.forEach((width, index) => {
+    els.caseTableWrap.querySelectorAll(`[data-case-col-index="${index}"]`).forEach(cell => {
+      cell.style.width = `${width}px`;
+      cell.style.minWidth = `${width}px`;
+    });
+  });
+
+  Array.from(els.caseBody.children).forEach((row, rowIndex) => {
+    applyCaseRowHeight(row, rowIndex);
+  });
+}
+
 function bindCustomerResizeHandles() {
   els.customerHead.querySelectorAll("[data-col-resize]").forEach(handle => {
     handle.addEventListener("pointerdown", startColumnResize);
   });
   els.customerBody.querySelectorAll("[data-row-resize]").forEach(handle => {
     handle.addEventListener("pointerdown", startRowResize);
+  });
+}
+
+function bindCaseResizeHandles() {
+  els.caseHead.querySelectorAll("[data-case-col-resize]").forEach(handle => {
+    handle.addEventListener("pointerdown", startCaseColumnResize);
+  });
+  els.caseBody.querySelectorAll("[data-case-row-resize]").forEach(handle => {
+    handle.addEventListener("pointerdown", startCaseRowResize);
   });
 }
 
@@ -1217,6 +1380,20 @@ function startColumnResize(event) {
   });
 }
 
+function startCaseColumnResize(event) {
+  if (event.button !== 0) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const columnIndex = Number(event.currentTarget.dataset.caseColResize);
+  beginTableResize({
+    type: "case-column",
+    index: columnIndex,
+    startX: event.clientX,
+    startY: event.clientY,
+    startSize: appState.caseColumnWidths[columnIndex] || appState.columnWidth
+  });
+}
+
 function startRowResize(event) {
   if (event.button !== 0) return;
   event.preventDefault();
@@ -1231,11 +1408,25 @@ function startRowResize(event) {
   });
 }
 
+function startCaseRowResize(event) {
+  if (event.button !== 0) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const rowIndex = Number(event.currentTarget.dataset.caseRowResize);
+  beginTableResize({
+    type: "case-row",
+    index: rowIndex,
+    startX: event.clientX,
+    startY: event.clientY,
+    startSize: appState.caseRowHeights[rowIndex] || appState.rowSpacing
+  });
+}
+
 function beginTableResize(session) {
   stopTableResize();
   appState.activeResize = session;
   document.body.classList.add("is-resizing");
-  document.body.classList.add(session.type === "column" ? "is-resizing-column" : "is-resizing-row");
+  document.body.classList.add(session.type.includes("column") ? "is-resizing-column" : "is-resizing-row");
   window.addEventListener("pointermove", handleTableResizeMove);
   window.addEventListener("pointerup", stopTableResize);
   window.addEventListener("pointercancel", stopTableResize);
@@ -1250,15 +1441,38 @@ function handleTableResizeMove(event) {
       COLUMN_WIDTH_MAX
     );
     appState.columnWidths[appState.activeResize.index] = nextWidth;
-  } else {
+    applyCustomerTableSizing();
+    return;
+  }
+  if (appState.activeResize.type === "case-column") {
+    const nextWidth = clamp(
+      appState.activeResize.startSize + (event.clientX - appState.activeResize.startX),
+      COLUMN_WIDTH_MIN,
+      COLUMN_WIDTH_MAX
+    );
+    appState.caseColumnWidths[appState.activeResize.index] = nextWidth;
+    applyCaseTableSizing();
+    return;
+  }
+  if (appState.activeResize.type === "case-row") {
+    const nextHeight = clamp(
+      appState.activeResize.startSize + (event.clientY - appState.activeResize.startY),
+      ROW_HEIGHT_MIN,
+      ROW_HEIGHT_MAX
+    );
+    appState.caseRowHeights[appState.activeResize.index] = nextHeight;
+    applyCaseTableSizing();
+    return;
+  }
+  if (appState.activeResize.type === "row") {
     const nextHeight = clamp(
       appState.activeResize.startSize + (event.clientY - appState.activeResize.startY),
       ROW_HEIGHT_MIN,
       ROW_HEIGHT_MAX
     );
     appState.rowHeights[appState.activeResize.index] = nextHeight;
+    applyCustomerTableSizing();
   }
-  applyCustomerTableSizing();
 }
 
 function stopTableResize() {

@@ -1014,15 +1014,18 @@ td textarea {
   line-height: 1.45;
 }
 
-.customer-row td {
+.customer-row td,
+.case-row td {
   position: relative;
 }
 
-.customer-row td textarea {
+.customer-row td textarea,
+.case-row td textarea {
   min-height: var(--row-size, var(--table-row-height));
 }
 
-.row-resize-anchor {
+.row-resize-anchor,
+.case-row-resize-anchor {
   padding-bottom: 12px;
 }
 
@@ -1049,6 +1052,7 @@ td textarea {
 }
 
 .customer-row:hover .row-resize-handle::after,
+.case-row:hover .row-resize-handle::after,
 .row-resize-handle:hover::after,
 body.is-resizing-row .row-resize-handle::after {
   background: color-mix(in srgb, var(--accent) 68%, white 32%);
