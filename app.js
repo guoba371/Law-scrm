@@ -56,8 +56,62 @@ const HEADER_KEYWORD_RE = /客户|姓名|来源|电话|案件|备注|金额|日�
 
 const DEFAULT_SOURCE_FILE = "2026年每月客户统计.xlsx";
 const DEFAULT_THEME = "light";
+const DEFAULT_LAWYER_OPTIONS = ["金律师", "晏律师", "翁律师"];
 const WORKSPACE_STORAGE_KEY = "law-scrm-workspace-v1";
 const DEAL_AMOUNT_HEADER = "成交金额";
+const CASE_HINT_KEYWORDS = ["大概案由", "案由", "跟进情况", "跟进", "咨询内容", "案件", "委托事项", "备注"];
+const CIVIL_CASE_KEYWORDS = [
+  "民事",
+  "合同",
+  "借款",
+  "欠款",
+  "债务",
+  "债权",
+  "婚姻",
+  "离婚",
+  "继承",
+  "房产",
+  "买卖",
+  "租赁",
+  "侵权",
+  "劳动",
+  "工伤",
+  "交通事故",
+  "赔偿",
+  "抚养",
+  "赡养",
+  "物业",
+  "公司",
+  "股权"
+];
+const CRIMINAL_CASE_KEYWORDS = [
+  "刑事",
+  "取保",
+  "拘留",
+  "逮捕",
+  "检察院",
+  "公安",
+  "派出所",
+  "看守所",
+  "诈骗",
+  "盗窃",
+  "抢劫",
+  "故意伤害",
+  "寻衅滋事",
+  "帮信",
+  "开设赌场",
+  "贩毒",
+  "走私",
+  "非法经营",
+  "强制猥亵",
+  "危险驾驶",
+  "酒驾",
+  "醉驾",
+  "刑拘",
+  "判刑",
+  "缓刑",
+  "辩护"
+];
 const COLUMN_WIDTH_MIN = 80;
 const COLUMN_WIDTH_MAX = 520;
 const ROW_HEIGHT_MIN = 32;
@@ -82,7 +136,10 @@ const appState = {
   columnWidth: 148,
   activeResize: null,
   activeModalEditor: null,
-  overdueNoticeShownFor: ""
+  overdueNoticeShownFor: "",
+  lawyerOptions: [...DEFAULT_LAWYER_OPTIONS],
+  customerTableDirty: true,
+  caseTableDirty: true
 };
 
 const scheduleExportLengthRefresh = createDeferredRunner(() => {
@@ -141,7 +198,8 @@ const els = {
   editorModalMeta: document.getElementById("editorModalMeta"),
   editorModalTextarea: document.getElementById("editorModalTextarea"),
   editorModalCloseBtn: document.getElementById("editorModalCloseBtn"),
-  editorModalSaveBtn: document.getElementById("editorModalSaveBtn")
+  editorModalSaveBtn: document.getElementById("editorModalSaveBtn"),
+  lawyerOptions: document.getElementById("lawyerOptions")
 };
 
 els.fileInput.addEventListener("change", async event => {
@@ -160,6 +218,7 @@ els.fileInput.addEventListener("change", async event => {
 });
 
 els.downloadBtn.addEventListener("click", () => {
+  syncFocusedEditorBeforeExport();
   const bytes = buildManagedWorkbook();
   const blob = new Blob([bytes], {
     type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -179,20 +238,19 @@ els.themeToggleBtn.addEventListener("click", () => {
 });
 
 els.allCustomersTabBtn.addEventListener("click", () => {
-  appState.activeView = "all";
-  render();
+  switchView("all");
 });
 
 els.closedCustomersTabBtn.addEventListener("click", () => {
-  appState.activeView = "closed";
-  render();
+  switchView("closed");
 });
 
 els.rowSpacingRange.addEventListener("input", event => {
   appState.rowSpacing = Number(event.currentTarget.value);
   appState.rowHeights = appState.customers.map(() => appState.rowSpacing);
   appState.caseRowHeights = appState.closedCustomers.map(() => appState.rowSpacing);
-  syncTableMetrics();
+  markTablesDirty({ customers: appState.activeView !== "all", cases: appState.activeView !== "closed" });
+  syncTableMetrics({ visibleOnly: true });
   scheduleWorkspacePersist();
 });
 
@@ -206,7 +264,8 @@ els.columnWidthRange.addEventListener("input", event => {
     { length: getCaseColumnCount() },
     () => appState.columnWidth
   );
-  syncTableMetrics();
+  markTablesDirty({ customers: appState.activeView !== "all", cases: appState.activeView !== "closed" });
+  syncTableMetrics({ visibleOnly: true });
   scheduleWorkspacePersist();
 });
 
@@ -282,6 +341,7 @@ async function loadWorkbook(fileName, buffer) {
   resetCustomerMetrics();
   syncClosedCustomers();
   seedTrackingRows();
+  markTablesDirty({ customers: true, cases: true });
   updateUploadProgress(88, "正在生成管理页面");
   render();
 }
@@ -506,24 +566,66 @@ function normalizeColor(color) {
 function seedTrackingRows() {
   for (const customer of appState.closedCustomers) {
     if (!appState.trackingById.has(customer.id)) {
-      const caseName = pickFirst(customer.data, ["案件", "案由", "委托事项", "咨询内容"]) || "";
-      appState.trackingById.set(customer.id, {
-        caseName,
-        filingDate: "",
-        caseType: "",
-        arbitrationHearingDate: "",
-        firstTrialDate: "",
-        secondTrialDate: "",
-        civilResult: "",
-        detentionDate: "",
-        procuratorateTransferDate: "",
-        criminalCourtDate: "",
-        criminalResult: "",
-        caseClosed: false,
-        followUpNotes: ""
-      });
+      appState.trackingById.set(customer.id, createEmptyTracking(customer));
+    }
+    autofillCaseFields(customer, appState.trackingById.get(customer.id));
+  }
+}
+
+function autofillCaseFields(customer, tracking) {
+  if (!customer || !tracking) return;
+  const hintText = getCaseHintText(customer);
+  if (!tracking.caseType) {
+    tracking.caseType = inferCaseType(hintText);
+  }
+  if (!String(customer.data[DEAL_AMOUNT_HEADER] ?? "").trim()) {
+    const amount = inferDealAmount(hintText);
+    if (amount) {
+      customer.data[DEAL_AMOUNT_HEADER] = amount;
     }
   }
+}
+
+function getCaseHintText(customer) {
+  return Object.entries(customer.data)
+    .filter(([header, value]) => {
+      const text = String(value ?? "").trim();
+      return text && CASE_HINT_KEYWORDS.some(keyword => header.includes(keyword));
+    })
+    .map(([header, value]) => `${header}：${value}`)
+    .join("\n");
+}
+
+function isCaseHintHeader(header) {
+  return CASE_HINT_KEYWORDS.some(keyword => String(header || "").includes(keyword));
+}
+
+function inferCaseType(text) {
+  const source = String(text || "");
+  if (!source.trim()) return "";
+  const criminalHits = countKeywordHits(source, CRIMINAL_CASE_KEYWORDS);
+  const civilHits = countKeywordHits(source, CIVIL_CASE_KEYWORDS);
+  if (criminalHits > civilHits) return "刑事";
+  if (civilHits > criminalHits) return "民事";
+  return "";
+}
+
+function countKeywordHits(text, keywords) {
+  return keywords.reduce((count, keyword) => (text.includes(keyword) ? count + 1 : count), 0);
+}
+
+function inferDealAmount(text) {
+  const source = String(text || "").replace(/[,，]/g, "");
+  if (!source.trim()) return "";
+  const labeled = source.match(/(?:成交金额|成交|代理费|律师费|费用|收费|收款|已收|实收|报价)[^\d￥¥]{0,12}[￥¥]?\s*(\d+(?:\.\d+)?)\s*(万|万元|元|块)?/);
+  const fallback = source.match(/[￥¥]\s*(\d+(?:\.\d+)?)\s*(万|万元|元|块)?/);
+  const match = labeled || fallback;
+  if (!match) return "";
+  const value = Number(match[1]);
+  if (!Number.isFinite(value) || value <= 0) return "";
+  const unit = match[2] || "";
+  const amount = unit.includes("万") ? value * 10000 : value;
+  return Number.isInteger(amount) ? String(amount) : String(Number(amount.toFixed(2)));
 }
 
 function pickFirst(data, keywords) {
@@ -539,28 +641,61 @@ function syncClosedCustomers() {
   appState.closedCustomers = appState.customers.filter(customer => customer.gradeKey === "closed");
 }
 
+function markTablesDirty({ customers = false, cases = false } = {}) {
+  if (customers) appState.customerTableDirty = true;
+  if (cases) appState.caseTableDirty = true;
+}
+
+function switchView(view) {
+  if (view !== "all" && view !== "closed") return;
+  const changed = appState.activeView !== view;
+  appState.activeView = view;
+  syncViewVisibility();
+  renderVisibleTables();
+  if (changed) {
+    scheduleWorkspacePersist();
+  }
+}
+
+function syncViewVisibility() {
+  els.allCustomersPage.classList.toggle("hidden", appState.activeView !== "all");
+  els.closedCustomersPage.classList.toggle("hidden", appState.activeView !== "closed");
+  els.allCustomersTabBtn.classList.toggle("active", appState.activeView === "all");
+  els.closedCustomersTabBtn.classList.toggle("active", appState.activeView === "closed");
+}
+
+function renderVisibleTables({ force = false } = {}) {
+  if (appState.activeView === "all") {
+    if (force || appState.customerTableDirty) {
+      renderCustomerTable();
+    }
+    return;
+  }
+  if (force || appState.caseTableDirty) {
+    renderCaseTable();
+  }
+}
+
 function render() {
+  markTablesDirty({ customers: true, cases: true });
   els.downloadBtn.disabled = !appState.customers.length;
   els.emptyState.classList.toggle("hidden", appState.customers.length > 0);
   els.caseTableToolbar?.classList.remove("hidden");
   els.caseTableWrap.classList.remove("hidden");
   els.allCustomersPanel.classList.toggle("hidden", appState.customers.length === 0);
-  els.allCustomersPage.classList.toggle("hidden", appState.activeView !== "all");
-  els.closedCustomersPage.classList.toggle("hidden", appState.activeView !== "closed");
-  els.allCustomersTabBtn.classList.toggle("active", appState.activeView === "all");
-  els.closedCustomersTabBtn.classList.toggle("active", appState.activeView === "closed");
+  syncViewVisibility();
   els.sourceHint.className = "case-inline-stats";
   els.allCustomersHint.textContent = appState.fileName
     ? `来源：${appState.fileName}，已将 2026年每月客户情况统计 精准导入到全部客户页面。`
     : "将 2026年每月客户情况统计 导入到此页面，字段与原表一一对应。";
 
   renderSummary();
-  renderCaseTable();
-  renderCustomerTable();
+  renderLawyerOptions();
+  renderVisibleTables({ force: true });
   syncOverdueNotice();
   scheduleExportLengthRefresh();
   syncUploadProgress();
-  syncTableMetrics();
+  syncTableMetrics({ visibleOnly: true });
   scheduleWorkspacePersist();
 }
 
@@ -576,6 +711,7 @@ function restoreStoredWorkspace() {
   appState.caseRowHeights = Array.isArray(saved.caseRowHeights) ? saved.caseRowHeights : [];
   appState.rowSpacing = Number(saved.rowSpacing) || appState.rowSpacing;
   appState.columnWidth = Number(saved.columnWidth) || appState.columnWidth;
+  appState.lawyerOptions = mergeLawyerOptions(saved.lawyerOptions);
   appState.activeView = saved.activeView === "closed" ? "closed" : "all";
   if (saved.caseTypeHeaderLabel) {
     CASE_TYPE_HEADER.label = saved.caseTypeHeaderLabel;
@@ -585,6 +721,7 @@ function restoreStoredWorkspace() {
   ensureCustomerFields(appState.customers);
   syncClosedCustomers();
   seedTrackingRows();
+  markTablesDirty({ customers: true, cases: true });
   ensureCustomerMetrics();
   ensureCaseMetrics();
   render();
@@ -620,6 +757,7 @@ function serializeWorkspace() {
     trackingById: Object.fromEntries(appState.trackingById),
     trackingFieldLabels: Object.fromEntries(TRACKING_FIELDS.map(field => [field.key, field.label])),
     caseTypeHeaderLabel: CASE_TYPE_HEADER.label,
+    lawyerOptions: appState.lawyerOptions,
     activeView: appState.activeView,
     rowSpacing: appState.rowSpacing,
     columnWidth: appState.columnWidth
@@ -636,6 +774,38 @@ function restoreTrackingFieldLabels(labels) {
       field.label = labels[field.key];
     }
   }
+}
+
+function renderLawyerOptions() {
+  if (!els.lawyerOptions) return;
+  els.lawyerOptions.innerHTML = appState.lawyerOptions
+    .map(option => `<option value="${escapeAttr(option)}"></option>`)
+    .join("");
+}
+
+function mergeLawyerOptions(options = []) {
+  const next = [...DEFAULT_LAWYER_OPTIONS];
+  for (const option of options) {
+    addUniqueTextOption(next, option);
+  }
+  return next;
+}
+
+function addLawyerOption(value) {
+  if (!addUniqueTextOption(appState.lawyerOptions, value)) return;
+  renderLawyerOptions();
+  scheduleWorkspacePersist();
+}
+
+function addUniqueTextOption(options, value) {
+  const text = String(value || "").trim();
+  if (!text || options.includes(text)) return false;
+  options.push(text);
+  return true;
+}
+
+function isLawyerHeader(header) {
+  return /办案律师|承办律师|律师/.test(String(header || ""));
 }
 
 function renderSummary() {
@@ -798,7 +968,8 @@ function renderCaseTable() {
       </th>`;
     })
     .join("")}</tr>`;
-  els.caseBody.innerHTML = "";
+  els.caseBody.replaceChildren();
+  const fragment = document.createDocumentFragment();
 
   for (const [rowIndex, customer] of appState.closedCustomers.entries()) {
     const tracking = appState.trackingById.get(customer.id);
@@ -823,8 +994,9 @@ function renderCaseTable() {
       );
     }
     row.innerHTML = cells.join("");
-    els.caseBody.appendChild(row);
+    fragment.appendChild(row);
   }
+  els.caseBody.appendChild(fragment);
 
   els.caseBody.querySelectorAll("[data-field]").forEach(input => {
     input.addEventListener("input", handleTrackingInput);
@@ -864,6 +1036,7 @@ function renderCaseTable() {
   });
   bindCaseResizeHandles();
   applyCaseTableSizing();
+  appState.caseTableDirty = false;
 }
 
 function getCaseTableColumns() {
@@ -942,7 +1115,19 @@ function getCaseFieldLabel(fieldKey) {
 }
 
 function renderCaseCustomerEditor(customerId, header, value, sourceIndex = -1) {
+  if (isLawyerHeader(header)) {
+    return renderLawyerEditor({
+      className: "table-input case-customer-input lawyer-input",
+      customerId,
+      value,
+      attrs: `data-table-copy="case-customer" data-case-customer-field="${escapeAttr(header)}" data-case-source-index="${sourceIndex}"`
+    });
+  }
   return `<textarea class="table-input case-customer-input" data-table-copy="case-customer" data-customer-id="${escapeAttr(customerId)}" data-case-customer-field="${escapeAttr(header)}" data-case-source-index="${sourceIndex}">${escapeHtml(value || "")}</textarea>`;
+}
+
+function renderLawyerEditor({ className, customerId, value, attrs }) {
+  return `<input class="${className}" list="lawyerOptions" data-lawyer-input="true" data-customer-id="${escapeAttr(customerId)}" ${attrs} value="${escapeAttr(value || "")}" />`;
 }
 
 function handleTrackingInput(event) {
@@ -975,6 +1160,13 @@ function handleCaseCustomerInput(event) {
   const customer = findCustomer(input.dataset.customerId);
   if (!customer) return;
   customer.data[input.dataset.caseCustomerField] = input.value;
+  if (input.dataset.lawyerInput) {
+    addLawyerOption(input.value);
+  }
+  if (isCaseHintHeader(input.dataset.caseCustomerField)) {
+    autofillCaseFields(customer, appState.trackingById.get(customer.id));
+  }
+  markTablesDirty({ customers: true });
   scheduleExportLengthRefresh();
   scheduleWorkspacePersist();
 }
@@ -1034,7 +1226,8 @@ function renderCustomerTable() {
         </th>`
     )
     .join("")}</tr>`;
-  els.customerBody.innerHTML = "";
+  els.customerBody.replaceChildren();
+  const fragment = document.createDocumentFragment();
 
   for (const [rowIndex, customer] of appState.customers.entries()) {
     const row = document.createElement("tr");
@@ -1069,8 +1262,9 @@ function renderCustomerTable() {
       );
     }
     row.innerHTML = cells.join("");
-    els.customerBody.appendChild(row);
+    fragment.appendChild(row);
   }
+  els.customerBody.appendChild(fragment);
 
   els.customerBody.querySelectorAll("[data-customer-field]").forEach(input => {
     input.addEventListener("input", handleCustomerInput);
@@ -1097,9 +1291,18 @@ function renderCustomerTable() {
   });
   bindCustomerResizeHandles();
   applyCustomerTableSizing();
+  appState.customerTableDirty = false;
 }
 
 function renderCustomerDataEditor(customerId, header, value, sourceIndex = -1) {
+  if (isLawyerHeader(header)) {
+    return renderLawyerEditor({
+      className: "table-input lawyer-input",
+      customerId,
+      value,
+      attrs: `data-table-copy="customer" data-customer-field="${escapeAttr(header)}" data-customer-source-index="${sourceIndex}"`
+    });
+  }
   return `<textarea class="table-input" data-table-copy="customer" data-customer-id="${escapeAttr(customerId)}" data-customer-field="${escapeAttr(header)}" data-customer-source-index="${sourceIndex}">${escapeHtml(value || "")}</textarea>`;
 }
 
@@ -1120,12 +1323,21 @@ function handleCustomerInput(event) {
   const customer = findCustomer(input.dataset.customerId);
   if (!customer) return;
   customer.data[input.dataset.customerField] = input.value;
+  if (input.dataset.lawyerInput) {
+    addLawyerOption(input.value);
+  }
+  if (customer.gradeKey === "closed" && isCaseHintHeader(input.dataset.customerField)) {
+    autofillCaseFields(customer, appState.trackingById.get(customer.id));
+  }
+  if (customer.gradeKey === "closed") {
+    markTablesDirty({ cases: true });
+  }
   scheduleExportLengthRefresh();
   scheduleWorkspacePersist();
 }
 
 function bindCustomerPaste(input) {
-  if (!(input instanceof HTMLTextAreaElement || input instanceof HTMLSelectElement)) return;
+  if (!(input instanceof HTMLTextAreaElement || input instanceof HTMLInputElement || input instanceof HTMLSelectElement)) return;
   input.addEventListener("paste", handleCustomerPaste);
 }
 
@@ -1275,21 +1487,30 @@ function isMultiCellPaste(grid) {
 }
 
 function applyCustomerGridPaste(startRowIndex, startColumnIndex, grid) {
+  let touchesClosedCustomers = false;
+  let touchesCaseHints = false;
   grid.forEach((rowValues, rowOffset) => {
     const customer = appState.customers[startRowIndex + rowOffset];
     if (!customer) return;
+    touchesClosedCustomers = touchesClosedCustomers || customer.gradeKey === "closed";
     rowValues.forEach((value, columnOffset) => {
       const header = appState.sourceHeaders[startColumnIndex + columnOffset];
       if (!header) return;
       customer.data[header] = value;
+      touchesCaseHints = touchesCaseHints || isCaseHintHeader(header);
     });
+    if (customer.gradeKey === "closed" && touchesCaseHints) {
+      autofillCaseFields(customer, appState.trackingById.get(customer.id));
+    }
   });
-  renderCustomerTable();
+  markTablesDirty({ customers: true, cases: touchesClosedCustomers });
+  renderVisibleTables();
   scheduleExportLengthRefresh();
   scheduleWorkspacePersist();
 }
 
 function applyCaseCustomerGridPaste(startRowIndex, startColumnIndex, grid) {
+  let touchesCaseHints = false;
   grid.forEach((rowValues, rowOffset) => {
     const customer = appState.closedCustomers[startRowIndex + rowOffset];
     if (!customer) return;
@@ -1297,10 +1518,14 @@ function applyCaseCustomerGridPaste(startRowIndex, startColumnIndex, grid) {
       const header = appState.sourceHeaders[startColumnIndex + columnOffset];
       if (!header) return;
       customer.data[header] = value;
+      touchesCaseHints = touchesCaseHints || isCaseHintHeader(header);
     });
+    if (touchesCaseHints) {
+      autofillCaseFields(customer, appState.trackingById.get(customer.id));
+    }
   });
-  renderCaseTable();
-  renderCustomerTable();
+  markTablesDirty({ customers: true, cases: true });
+  renderVisibleTables();
   scheduleExportLengthRefresh();
   scheduleWorkspacePersist();
 }
@@ -1323,8 +1548,8 @@ function applyCaseTableGridPaste(startRowIndex, startColumnIndex, grid) {
     });
   });
   renderSummary();
-  renderCaseTable();
-  renderCustomerTable();
+  markTablesDirty({ customers: true, cases: true });
+  renderVisibleTables();
   scheduleExportLengthRefresh();
   scheduleWorkspacePersist();
 }
@@ -1373,7 +1598,8 @@ function handleCustomerDealStatusChange(event) {
   syncClosedCustomers();
   seedTrackingRows();
   renderSummary();
-  renderCaseTable();
+  markTablesDirty({ cases: true });
+  renderVisibleTables();
   scheduleExportLengthRefresh();
   scheduleWorkspacePersist();
 
@@ -1476,7 +1702,8 @@ function handleCaseTrackingHeaderChange(event) {
   if (!field) return;
   const newLabel = String(input.value || "").trim() || field.label;
   field.label = newLabel;
-  renderCaseTable();
+  markTablesDirty({ cases: true });
+  renderVisibleTables();
   scheduleExportLengthRefresh();
   scheduleWorkspacePersist();
 }
@@ -1484,7 +1711,8 @@ function handleCaseTrackingHeaderChange(event) {
 function handleCaseTypeHeaderChange(event) {
   const input = event.currentTarget;
   CASE_TYPE_HEADER.label = String(input.value || "").trim() || CASE_TYPE_HEADER.label;
-  renderCaseTable();
+  markTablesDirty({ cases: true });
+  renderVisibleTables();
   scheduleExportLengthRefresh();
   scheduleWorkspacePersist();
 }
@@ -1585,11 +1813,19 @@ function deleteSourceColumn(sourceIndex) {
   render();
 }
 
-function syncTableMetrics() {
+function syncTableMetrics({ visibleOnly = false } = {}) {
   document.documentElement.style.setProperty("--table-row-height", `${appState.rowSpacing}px`);
   document.documentElement.style.setProperty("--table-column-width", `${appState.columnWidth}px`);
   if (els.rowSpacingRange) els.rowSpacingRange.value = String(appState.rowSpacing);
   if (els.columnWidthRange) els.columnWidthRange.value = String(appState.columnWidth);
+  if (visibleOnly) {
+    if (appState.activeView === "all") {
+      applyCustomerTableSizing();
+    } else {
+      applyCaseTableSizing();
+    }
+    return;
+  }
   applyCustomerTableSizing();
   applyCaseTableSizing();
 }
@@ -1672,10 +1908,7 @@ function applyCustomerTableSizing() {
   ensureCustomerMetrics();
 
   appState.columnWidths.forEach((width, index) => {
-    els.customerTable.querySelectorAll(`[data-col-index="${index}"]`).forEach(cell => {
-      cell.style.width = `${width}px`;
-      cell.style.minWidth = `${width}px`;
-    });
+    applyCustomerColumnWidth(index, width);
   });
 
   Array.from(els.customerBody.children).forEach((row, rowIndex) => {
@@ -1688,15 +1921,36 @@ function applyCaseTableSizing() {
   ensureCaseMetrics();
 
   appState.caseColumnWidths.forEach((width, index) => {
-    els.caseTableWrap.querySelectorAll(`[data-case-col-index="${index}"]`).forEach(cell => {
-      cell.style.width = `${width}px`;
-      cell.style.minWidth = `${width}px`;
-    });
+    applyCaseColumnWidth(index, width);
   });
 
   Array.from(els.caseBody.children).forEach((row, rowIndex) => {
     applyCaseRowHeight(row, rowIndex);
   });
+}
+
+function applyCustomerColumnWidth(index, width = appState.columnWidths[index] || appState.columnWidth) {
+  els.customerTable?.querySelectorAll(`[data-col-index="${index}"]`).forEach(cell => {
+    cell.style.width = `${width}px`;
+    cell.style.minWidth = `${width}px`;
+  });
+}
+
+function applyCaseColumnWidth(index, width = appState.caseColumnWidths[index] || appState.columnWidth) {
+  els.caseTableWrap?.querySelectorAll(`[data-case-col-index="${index}"]`).forEach(cell => {
+    cell.style.width = `${width}px`;
+    cell.style.minWidth = `${width}px`;
+  });
+}
+
+function applyCustomerRowSize(index) {
+  const row = els.customerBody?.children[index];
+  if (row) applyCustomerRowHeight(row, index);
+}
+
+function applyCaseRowSize(index) {
+  const row = els.caseBody?.children[index];
+  if (row) applyCaseRowHeight(row, index);
 }
 
 function bindCustomerResizeHandles() {
@@ -1792,7 +2046,7 @@ function handleTableResizeMove(event) {
       COLUMN_WIDTH_MAX
     );
     appState.columnWidths[appState.activeResize.index] = nextWidth;
-    applyCustomerTableSizing();
+    applyCustomerColumnWidth(appState.activeResize.index, nextWidth);
     return;
   }
   if (appState.activeResize.type === "case-column") {
@@ -1802,7 +2056,7 @@ function handleTableResizeMove(event) {
       COLUMN_WIDTH_MAX
     );
     appState.caseColumnWidths[appState.activeResize.index] = nextWidth;
-    applyCaseTableSizing();
+    applyCaseColumnWidth(appState.activeResize.index, nextWidth);
     return;
   }
   if (appState.activeResize.type === "case-row") {
@@ -1812,7 +2066,7 @@ function handleTableResizeMove(event) {
       ROW_HEIGHT_MAX
     );
     appState.caseRowHeights[appState.activeResize.index] = nextHeight;
-    applyCaseTableSizing();
+    applyCaseRowSize(appState.activeResize.index);
     return;
   }
   if (appState.activeResize.type === "row") {
@@ -1822,7 +2076,7 @@ function handleTableResizeMove(event) {
       ROW_HEIGHT_MAX
     );
     appState.rowHeights[appState.activeResize.index] = nextHeight;
-    applyCustomerTableSizing();
+    applyCustomerRowSize(appState.activeResize.index);
   }
 }
 
@@ -1874,11 +2128,12 @@ function applyTheme() {
 }
 
 function buildManagedWorkbook() {
-  const allHeaders = appState.sourceHeaders;
+  prepareWorkbookExport();
+  const allHeaders = ["客户是否成交", ...appState.sourceHeaders];
   const caseColumns = getCaseTableColumns();
   const caseHeaders = ["案件状态", "客户等级", "来源表", ...caseColumns.map(column => column.label)];
   const caseRows = appState.closedCustomers.map(customer => {
-    const tracking = appState.trackingById.get(customer.id);
+    const tracking = appState.trackingById.get(customer.id) || createEmptyTracking(customer);
     return [
       tracking.caseClosed ? "已结案" : "未结案",
       customer.grade,
@@ -1886,7 +2141,7 @@ function buildManagedWorkbook() {
       ...caseColumns.map(column => getCaseColumnExportValue(customer, tracking, column))
     ];
   });
-  const customerRows = getRawCustomerRows();
+  const customerRows = getExportCustomerRows();
   return writeXlsx([
     {
       name: "成交客户案件跟踪",
@@ -1901,6 +2156,43 @@ function buildManagedWorkbook() {
       name: "全部客户等级",
       rows: [allHeaders, ...customerRows]
     }
+  ]);
+}
+
+function syncFocusedEditorBeforeExport() {
+  const active = document.activeElement;
+  if (!isCopyableTableInput(active)) return;
+  active.dispatchEvent(new Event(active instanceof HTMLSelectElement ? "change" : "input", { bubbles: true }));
+}
+
+function prepareWorkbookExport() {
+  ensureCustomerFields(appState.customers);
+  syncClosedCustomers();
+  seedTrackingRows();
+}
+
+function createEmptyTracking(customer) {
+  return {
+    caseName: pickFirst(customer.data, ["案件", "案由", "委托事项", "咨询内容"]) || "",
+    filingDate: "",
+    caseType: "",
+    arbitrationHearingDate: "",
+    firstTrialDate: "",
+    secondTrialDate: "",
+    civilResult: "",
+    detentionDate: "",
+    procuratorateTransferDate: "",
+    criminalCourtDate: "",
+    criminalResult: "",
+    caseClosed: false,
+    followUpNotes: ""
+  };
+}
+
+function getExportCustomerRows() {
+  return appState.customers.map(customer => [
+    customer.grade || CUSTOMER_GRADE[customer.gradeKey] || CUSTOMER_GRADE.unknown,
+    ...appState.sourceHeaders.map(header => customer.data[header] ?? "")
   ]);
 }
 
@@ -2220,7 +2512,7 @@ function worksheetXml(rows, markOpenCases) {
   const xmlRows = rows.map((row, rIndex) => {
     const style = rIndex === 0 || (rIndex === 2 && markOpenCases) ? 1 : 0;
     const rowStyle = markOpenCases && rIndex > 2 && row[0] === "未结案" ? 2 : style;
-    const cells = Array.from({ length: maxColumns }, (_, cIndex) => {
+    const cells = Array.from({ length: row.length || maxColumns }, (_, cIndex) => {
       const value = row[cIndex] ?? "";
       const ref = `${indexToColumnName(cIndex)}${rIndex + 1}`;
       const cellStyle = rowStyle ? ` s="${rowStyle}"` : "";

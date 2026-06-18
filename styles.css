@@ -642,6 +642,9 @@ button:disabled {
   max-height: 70vh;
   background: var(--panel);
   scrollbar-color: color-mix(in srgb, var(--line-strong) 72%, transparent 28%) transparent;
+  contain: layout paint;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 table {
@@ -797,9 +800,6 @@ tbody tr:hover {
 
 tbody tr.open-case td {
   background: var(--open-row-bg);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--open-row-border) 22%, transparent 78%),
-    inset 0 -1px 0 color-mix(in srgb, var(--open-row-border) 22%, transparent 78%);
 }
 
 tbody tr.open-case:hover td {
@@ -809,31 +809,19 @@ tbody tr.open-case:hover td {
 .case-row-open td {
   background: var(--case-open-bg);
   color: var(--case-open-ink);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--case-open-edge) 24%, transparent 76%),
-    inset 0 -1px 0 color-mix(in srgb, var(--case-open-edge) 24%, transparent 76%);
 }
 
 .case-row-open td:first-child {
-  box-shadow:
-    inset 5px 0 0 var(--case-open-edge),
-    inset 0 1px 0 color-mix(in srgb, var(--case-open-edge) 28%, transparent 72%),
-    inset 0 -1px 0 color-mix(in srgb, var(--case-open-edge) 28%, transparent 72%);
+  border-left: 5px solid var(--case-open-edge);
 }
 
 .case-row-completed td {
   background: var(--case-completed-bg);
   color: var(--case-completed-ink);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--case-completed-edge) 18%, transparent 82%),
-    inset 0 -1px 0 color-mix(in srgb, var(--case-completed-edge) 18%, transparent 82%);
 }
 
 .case-row-completed td:first-child {
-  box-shadow:
-    inset 5px 0 0 var(--case-completed-edge),
-    inset 0 1px 0 color-mix(in srgb, var(--case-completed-edge) 20%, transparent 80%),
-    inset 0 -1px 0 color-mix(in srgb, var(--case-completed-edge) 20%, transparent 80%);
+  border-left: 5px solid var(--case-completed-edge);
 }
 
 .case-row-open td input,
@@ -851,16 +839,10 @@ tbody tr.open-case:hover td {
 .customer-row-closed td {
   background: var(--closed-row-bg);
   color: var(--closed-row-ink);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--closed-row-border) 44%, transparent 56%),
-    inset 0 -1px 0 color-mix(in srgb, var(--closed-row-border) 44%, transparent 56%);
 }
 
 .customer-row-closed td:first-child {
-  box-shadow:
-    inset 4px 0 0 var(--red-ink),
-    inset 0 1px 0 color-mix(in srgb, var(--closed-row-border) 44%, transparent 56%),
-    inset 0 -1px 0 color-mix(in srgb, var(--closed-row-border) 44%, transparent 56%);
+  border-left: 4px solid var(--red-ink);
 }
 
 .customer-row-closed td textarea,
@@ -879,16 +861,10 @@ tbody tr.open-case:hover td {
 .customer-row-valuable td {
   background: var(--valuable-row-bg);
   color: var(--valuable-row-ink);
-  box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--valuable-row-border) 42%, transparent 58%),
-    inset 0 -1px 0 color-mix(in srgb, var(--valuable-row-border) 42%, transparent 58%);
 }
 
 .customer-row-valuable td:first-child {
-  box-shadow:
-    inset 4px 0 0 var(--yellow-ink),
-    inset 0 1px 0 color-mix(in srgb, var(--valuable-row-border) 42%, transparent 58%),
-    inset 0 -1px 0 color-mix(in srgb, var(--valuable-row-border) 42%, transparent 58%);
+  border-left: 4px solid var(--yellow-ink);
 }
 
 .customer-row-valuable td textarea,
@@ -921,9 +897,6 @@ tbody tr.open-case:hover td {
 
 tbody tr:focus-within td {
   background: var(--active-row-bg);
-  box-shadow:
-    inset 0 1px 0 var(--active-row-outline),
-    inset 0 -1px 0 var(--active-row-outline);
 }
 
 tbody tr.open-case:focus-within td {
@@ -931,60 +904,42 @@ tbody tr.open-case:focus-within td {
 }
 
 tbody tr:focus-within td:first-child {
-  box-shadow:
-    inset 4px 0 0 var(--active-row-edge),
-    inset 0 1px 0 var(--active-row-outline),
-    inset 0 -1px 0 var(--active-row-outline);
+  border-left-color: var(--active-row-edge);
 }
 
 tbody tr.grade-closed td:first-child,
 tbody tr.grade-valuable td:first-child,
 tbody tr.grade-unclosed td:first-child,
 tbody tr.grade-unknown td:first-child {
-  box-shadow: inset 3px 0 0 transparent;
+  border-left: 3px solid transparent;
 }
 
 tbody tr.grade-closed td:first-child {
-  box-shadow: inset 3px 0 0 var(--red-ink);
+  border-left-color: var(--red-ink);
 }
 
 tbody tr.grade-valuable td:first-child {
-  box-shadow: inset 3px 0 0 var(--yellow-ink);
+  border-left-color: var(--yellow-ink);
 }
 
 tbody tr.grade-unclosed td:first-child {
-  box-shadow: inset 3px 0 0 #d7658b;
+  border-left-color: #d7658b;
 }
 
 tbody tr.grade-closed:focus-within td:first-child {
-  box-shadow:
-    inset 6px 0 0 var(--red-ink),
-    inset 8px 0 0 var(--active-row-edge),
-    inset 0 1px 0 var(--active-row-outline),
-    inset 0 -1px 0 var(--active-row-outline);
+  border-left-color: var(--red-ink);
 }
 
 tbody tr.grade-valuable:focus-within td:first-child {
-  box-shadow:
-    inset 6px 0 0 var(--yellow-ink),
-    inset 8px 0 0 var(--active-row-edge),
-    inset 0 1px 0 var(--active-row-outline),
-    inset 0 -1px 0 var(--active-row-outline);
+  border-left-color: var(--yellow-ink);
 }
 
 tbody tr.grade-unclosed:focus-within td:first-child {
-  box-shadow:
-    inset 6px 0 0 #d7658b,
-    inset 8px 0 0 var(--active-row-edge),
-    inset 0 1px 0 var(--active-row-outline),
-    inset 0 -1px 0 var(--active-row-outline);
+  border-left-color: #d7658b;
 }
 
 tbody tr.grade-unknown:focus-within td:first-child {
-  box-shadow:
-    inset 4px 0 0 var(--active-row-edge),
-    inset 0 1px 0 var(--active-row-outline),
-    inset 0 -1px 0 var(--active-row-outline);
+  border-left-color: var(--active-row-edge);
 }
 
 td input,
@@ -1000,17 +955,15 @@ td textarea {
   color: var(--ink);
   outline: none;
   transition:
-    background 120ms ease,
-    border-color 120ms ease,
-    box-shadow 120ms ease,
-    color 120ms ease;
+    background 80ms ease,
+    border-color 80ms ease;
 }
 
 td textarea {
   display: block;
   min-height: var(--table-row-height);
   max-height: 140px;
-  resize: vertical;
+  resize: none;
   line-height: 1.45;
 }
 
@@ -1070,7 +1023,8 @@ td select:focus,
 td textarea:focus {
   background: var(--field-focus-bg);
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--field-focus-ring);
+  outline: 2px solid var(--field-focus-ring);
+  outline-offset: -1px;
 }
 
 td input[type="checkbox"] {
@@ -1105,6 +1059,11 @@ td input[type="checkbox"] {
   min-width: 150px;
 }
 
+.lawyer-input {
+  display: block;
+  min-height: var(--row-size, var(--table-row-height));
+}
+
 .case-customer-input,
 .case-tracking-input {
   min-width: 150px;
@@ -1121,7 +1080,7 @@ td input[type="checkbox"] {
 .table-input:hover,
 .case-customer-input:hover,
 .case-tracking-input:hover {
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent 78%);
+  border-color: color-mix(in srgb, var(--accent) 28%, transparent 72%);
 }
 
 .compact {
