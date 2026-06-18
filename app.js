@@ -56,6 +56,7 @@ const HEADER_KEYWORD_RE = /客户|姓名|来源|电话|案件|备注|金额|日�
 
 const DEFAULT_SOURCE_FILE = "2026年每月客户统计.xlsx";
 const DEFAULT_THEME = "light";
+const WORKSPACE_STORAGE_KEY = "law-scrm-workspace-v1";
 const DEAL_AMOUNT_HEADER = "成交金额";
 const COLUMN_WIDTH_MIN = 80;
 const COLUMN_WIDTH_MAX = 520;
@@ -86,6 +87,10 @@ const appState = {
 
 const scheduleExportLengthRefresh = createDeferredRunner(() => {
   document.documentElement.dataset.exportLength = String(appState.customers.length);
+});
+
+const scheduleWorkspacePersist = createDeferredRunner(() => {
+  persistWorkspace();
 });
 
 window.lawScrmDebug = {
@@ -188,6 +193,7 @@ els.rowSpacingRange.addEventListener("input", event => {
   appState.rowHeights = appState.customers.map(() => appState.rowSpacing);
   appState.caseRowHeights = appState.closedCustomers.map(() => appState.rowSpacing);
   syncTableMetrics();
+  scheduleWorkspacePersist();
 });
 
 els.columnWidthRange.addEventListener("input", event => {
@@ -201,6 +207,7 @@ els.columnWidthRange.addEventListener("input", event => {
     () => appState.columnWidth
   );
   syncTableMetrics();
+  scheduleWorkspacePersist();
 });
 
 els.addCustomerRowBtn.addEventListener("click", () => {
@@ -248,7 +255,9 @@ window.addEventListener("keydown", event => {
 applyTheme();
 syncUploadProgress();
 syncTableMetrics();
-bootstrapDefaultWorkbook();
+if (!restoreStoredWorkspace()) {
+  bootstrapDefaultWorkbook();
+}
 
 async function bootstrapDefaultWorkbook() {
   try {
@@ -551,6 +560,78 @@ function render() {
   scheduleExportLengthRefresh();
   syncUploadProgress();
   syncTableMetrics();
+  scheduleWorkspacePersist();
+}
+
+function restoreStoredWorkspace() {
+  const saved = loadStoredWorkspace();
+  if (!saved) return false;
+  appState.fileName = saved.fileName || "";
+  appState.customers = Array.isArray(saved.customers) ? saved.customers : [];
+  appState.sourceHeaders = Array.isArray(saved.sourceHeaders) ? saved.sourceHeaders : [];
+  appState.columnWidths = Array.isArray(saved.columnWidths) ? saved.columnWidths : [];
+  appState.rowHeights = Array.isArray(saved.rowHeights) ? saved.rowHeights : [];
+  appState.caseColumnWidths = Array.isArray(saved.caseColumnWidths) ? saved.caseColumnWidths : [];
+  appState.caseRowHeights = Array.isArray(saved.caseRowHeights) ? saved.caseRowHeights : [];
+  appState.rowSpacing = Number(saved.rowSpacing) || appState.rowSpacing;
+  appState.columnWidth = Number(saved.columnWidth) || appState.columnWidth;
+  appState.activeView = saved.activeView === "closed" ? "closed" : "all";
+  if (saved.caseTypeHeaderLabel) {
+    CASE_TYPE_HEADER.label = saved.caseTypeHeaderLabel;
+  }
+  restoreTrackingFieldLabels(saved.trackingFieldLabels);
+  appState.trackingById = new Map(Object.entries(saved.trackingById || {}));
+  ensureCustomerFields(appState.customers);
+  syncClosedCustomers();
+  seedTrackingRows();
+  ensureCustomerMetrics();
+  ensureCaseMetrics();
+  render();
+  return true;
+}
+
+function loadStoredWorkspace() {
+  try {
+    const raw = localStorage.getItem(WORKSPACE_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function persistWorkspace() {
+  try {
+    localStorage.setItem(WORKSPACE_STORAGE_KEY, JSON.stringify(serializeWorkspace()));
+  } catch {
+    // Ignore storage failures; the current in-memory table still works.
+  }
+}
+
+function serializeWorkspace() {
+  return {
+    fileName: appState.fileName,
+    customers: appState.customers,
+    sourceHeaders: appState.sourceHeaders,
+    columnWidths: appState.columnWidths,
+    rowHeights: appState.rowHeights,
+    caseColumnWidths: appState.caseColumnWidths,
+    caseRowHeights: appState.caseRowHeights,
+    trackingById: Object.fromEntries(appState.trackingById),
+    trackingFieldLabels: Object.fromEntries(TRACKING_FIELDS.map(field => [field.key, field.label])),
+    caseTypeHeaderLabel: CASE_TYPE_HEADER.label,
+    activeView: appState.activeView,
+    rowSpacing: appState.rowSpacing,
+    columnWidth: appState.columnWidth
+  };
+}
+
+function restoreTrackingFieldLabels(labels) {
+  if (!labels || typeof labels !== "object") return;
+  for (const field of TRACKING_FIELDS) {
+    if (typeof labels[field.key] === "string" && labels[field.key].trim()) {
+      field.label = labels[field.key];
+    }
+  }
 }
 
 function renderSummary() {
@@ -827,6 +908,7 @@ function handleTrackingInput(event) {
   tracking[input.dataset.field] = input.type === "checkbox" ? input.checked : input.value;
   renderSummary();
   syncOverdueNotice();
+  scheduleWorkspacePersist();
   const row = input.closest("tr");
   if (row) {
     row.classList.toggle("open-case", !tracking.caseClosed);
@@ -841,6 +923,7 @@ function handleCaseCustomerInput(event) {
   if (!customer) return;
   customer.data[input.dataset.caseCustomerField] = input.value;
   scheduleExportLengthRefresh();
+  scheduleWorkspacePersist();
 }
 
 function bindExpandableEditor(input, meta) {
@@ -984,6 +1067,7 @@ function handleCustomerInput(event) {
   if (!customer) return;
   customer.data[input.dataset.customerField] = input.value;
   scheduleExportLengthRefresh();
+  scheduleWorkspacePersist();
 }
 
 function bindCustomerPaste(input) {
@@ -1062,6 +1146,7 @@ function applyCustomerGridPaste(startRowIndex, startColumnIndex, grid) {
   });
   renderCustomerTable();
   scheduleExportLengthRefresh();
+  scheduleWorkspacePersist();
 }
 
 function applyCaseCustomerGridPaste(startRowIndex, startColumnIndex, grid) {
@@ -1077,6 +1162,7 @@ function applyCaseCustomerGridPaste(startRowIndex, startColumnIndex, grid) {
   renderCaseTable();
   renderCustomerTable();
   scheduleExportLengthRefresh();
+  scheduleWorkspacePersist();
 }
 
 function applyCaseTrackingGridPaste(startRowIndex, startColumnIndex, grid) {
@@ -1094,6 +1180,7 @@ function applyCaseTrackingGridPaste(startRowIndex, startColumnIndex, grid) {
   renderSummary();
   renderCaseTable();
   scheduleExportLengthRefresh();
+  scheduleWorkspacePersist();
 }
 
 function normalizeTrackingPasteValue(field, value) {
@@ -1119,6 +1206,7 @@ function handleCustomerDealStatusChange(event) {
   renderSummary();
   renderCaseTable();
   scheduleExportLengthRefresh();
+  scheduleWorkspacePersist();
 
   const row = input.closest("tr");
   if (row) {
@@ -1209,6 +1297,7 @@ function handleCaseTrackingHeaderChange(event) {
   field.label = newLabel;
   renderCaseTable();
   scheduleExportLengthRefresh();
+  scheduleWorkspacePersist();
 }
 
 function handleCaseTypeHeaderChange(event) {
@@ -1216,6 +1305,7 @@ function handleCaseTypeHeaderChange(event) {
   CASE_TYPE_HEADER.label = String(input.value || "").trim() || CASE_TYPE_HEADER.label;
   renderCaseTable();
   scheduleExportLengthRefresh();
+  scheduleWorkspacePersist();
 }
 
 function findCustomer(customerId) {
@@ -1562,6 +1652,7 @@ function stopTableResize() {
   window.removeEventListener("pointerup", stopTableResize);
   window.removeEventListener("pointercancel", stopTableResize);
   appState.activeResize = null;
+  scheduleWorkspacePersist();
 }
 
 function clamp(value, min, max) {
